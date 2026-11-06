@@ -9,7 +9,7 @@ const navLinks = [
   { href: "/how-it-works", label: "How It Works" },
   { href: "/faq", label: "FAQ" },
   { href: "/contact", label: "Contact Us" },
-  { href: "/login", label: "Doctor Login" },
+  { href: "/login", label: "" },
 ];
 
 export default function Header() {
@@ -22,9 +22,9 @@ export default function Header() {
         {/* Logo */}
         <Link to="/" className="flex items-center shrink-0 pl-1">
           <img
-            src="/Group 5 (1).svg"
+            src="/image 26.svg"
             alt="ChatDr Logo"
-            className="h-8 md:h-9 w-auto object-contain transition-transform hover:scale-105"
+            className="h-10 md:h-11 w-auto object-contain transition-transform hover:scale-105"
           />
         </Link>
 
