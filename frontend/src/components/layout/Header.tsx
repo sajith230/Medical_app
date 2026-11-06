@@ -8,7 +8,8 @@ const navLinks = [
   { href: "/", label: "Home" },
   { href: "/how-it-works", label: "How It Works" },
   { href: "/faq", label: "FAQ" },
-  { href: "/contact", label: "Contact" },
+  { href: "/contact", label: "Contact Us" },
+  { href: "/login", label: "Doctor Login" },
 ];
 
 export default function Header() {
@@ -16,45 +17,43 @@ export default function Header() {
   const location = useLocation();
 
   return (
-    <header className="fixed top-5 left-1/2 z-50 -translate-x-1/2 w-[calc(100%-2rem)] max-w-5xl print:hidden">
-      <div className="flex h-14 items-center justify-between rounded-full bg-white/80 px-4 shadow-lg shadow-primary/5 backdrop-blur-xl border border-white/40 md:px-6">
+    <header className="fixed top-4 left-1/2 z-50 -translate-x-1/2 w-[calc(100%-2rem)] max-w-4xl print:hidden">
+      <div className="flex h-12 md:h-13 items-center justify-between rounded-full bg-white/95 px-3 md:px-5 shadow-sm border border-slate-200/80 backdrop-blur-md">
         {/* Logo */}
-        <Link to="/" className="flex items-center shrink-0">
+        <Link to="/" className="flex items-center shrink-0 pl-1">
           <img
             src="/Group 5 (1).svg"
             alt="ChatDr Logo"
-            className="h-10 w-auto object-contain transition-transform hover:scale-105"
+            className="h-8 md:h-9 w-auto object-contain transition-transform hover:scale-105"
           />
         </Link>
 
         {/* Desktop nav */}
         <nav className="hidden items-center gap-1 md:flex">
-          {navLinks.map((link) => (
-            <Link
-              key={link.href}
-              to={link.href}
-              className={`rounded-full px-4 py-1.5 text-sm font-medium transition-colors hover:bg-secondary ${
-                location.pathname === link.href
-                  ? "text-primary"
-                  : "text-muted-foreground"
-              }`}
-            >
-              {link.label}
-            </Link>
-          ))}
+          {navLinks.map((link) => {
+            const isActive = location.pathname === link.href;
+            return (
+              <Link
+                key={link.href}
+                to={link.href}
+                className={`rounded-full px-3.5 py-1 text-xs md:text-sm font-medium transition-colors ${
+                  isActive
+                    ? "bg-[#e0f2fe] text-[#0284c7]"
+                    : "text-slate-600 hover:text-slate-900 hover:bg-slate-50"
+                }`}
+              >
+                {link.label}
+              </Link>
+            );
+          })}
         </nav>
 
         {/* Desktop CTA */}
-        <div className="hidden items-center gap-2 md:flex shrink-0">
-          <Link to="/login">
-            <Button variant="ghost" size="sm" className="rounded-full text-sm">
-              Doctor Login
-            </Button>
-          </Link>
+        <div className="hidden items-center md:flex shrink-0">
           <Link to="/consultation/intake">
             <Button
               size="sm"
-              className="rounded-full gradient-primary border-0 text-white text-sm shadow-md shadow-primary/25 hover:shadow-lg hover:shadow-primary/30 transition-shadow"
+              className="rounded-full bg-[#0284c7] hover:bg-[#0369a1] text-white text-xs md:text-sm font-semibold px-4 md:px-5 py-1.5 shadow-sm transition-all"
             >
               Start Consultation
             </Button>
@@ -64,30 +63,32 @@ export default function Header() {
         {/* Mobile menu */}
         <Sheet open={open} onOpenChange={setOpen}>
           <SheetTrigger asChild className="md:hidden">
-            <Button variant="ghost" size="icon" className="rounded-full h-9 w-9">
-              <Menu className="h-5 w-5" />
+            <Button variant="ghost" size="icon" className="rounded-full h-8 w-8">
+              <Menu className="h-4 w-4" />
             </Button>
           </SheetTrigger>
           <SheetContent side="right" className="w-72">
-            <div className="flex flex-col gap-4 pt-8">
+            <div className="flex flex-col gap-3 pt-8">
+              <Link to="/" onClick={() => setOpen(false)} className="mb-2">
+                <img src="/Group 5 (1).svg" alt="ChatDr Logo" className="h-8 w-auto" />
+              </Link>
               {navLinks.map((link) => (
                 <Link
                   key={link.href}
                   to={link.href}
                   onClick={() => setOpen(false)}
-                  className="rounded-lg px-3 py-2 text-base font-medium text-foreground hover:bg-secondary"
+                  className={`rounded-lg px-3 py-2 text-sm font-medium ${
+                    location.pathname === link.href
+                      ? "bg-[#e0f2fe] text-[#0284c7]"
+                      : "text-foreground hover:bg-secondary"
+                  }`}
                 >
                   {link.label}
                 </Link>
               ))}
-              <hr className="border-border" />
-              <Link to="/login" onClick={() => setOpen(false)}>
-                <Button variant="outline" className="w-full rounded-full">
-                  Doctor Login
-                </Button>
-              </Link>
+              <hr className="border-border my-2" />
               <Link to="/consultation/intake" onClick={() => setOpen(false)}>
-                <Button className="w-full rounded-full gradient-primary border-0 text-white">
+                <Button className="w-full rounded-full bg-[#0284c7] hover:bg-[#0369a1] text-white text-sm">
                   Start Consultation
                 </Button>
               </Link>

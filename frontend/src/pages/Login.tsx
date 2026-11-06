@@ -9,17 +9,24 @@ import { Separator } from "@/components/ui/separator";
 import { api } from "@/services/api";
 import { useToast } from "@/hooks/use-toast";
 import { Stethoscope, Sparkles } from "lucide-react";
+import LoadingScreen from "@/components/LoadingScreen";
 
 export default function Login() {
   const [email, setEmail] = useState("doctor@medilanka.com");
   const [password, setPassword] = useState("doctor123");
   const [loading, setLoading] = useState(false);
+  const [showLoading, setShowLoading] = useState(false);
+  const [loadingMessage, setLoadingMessage] = useState("Authenticating...");
+
   const navigate = useNavigate();
   const { toast } = useToast();
 
   const handleEmailLogin = async (e: React.FormEvent) => {
     e.preventDefault();
+    setShowLoading(true);
+    setLoadingMessage("Authenticating Doctor Credentials...");
     setLoading(true);
+
     const { data, error } = await api.auth.signInWithPassword({
       email,
       password,
@@ -27,29 +34,40 @@ export default function Login() {
     });
 
     if (error) {
+      setShowLoading(false);
+      setLoading(false);
       toast({ title: "Login Failed", description: error.message, variant: "destructive" });
     } else {
-      toast({
-        title: "Welcome Back",
-        description: `Signed in as ${data?.user?.full_name || email}`,
-      });
-      navigate("/dashboard");
+      setLoadingMessage("Access Granted! Launching Doctor Dashboard...");
+      // Let the progress bar animation finish smoothly
+      setTimeout(() => {
+        toast({
+          title: "Welcome Back",
+          description: `Signed in as ${data?.user?.full_name || email}`,
+        });
+        navigate("/dashboard");
+      }, 1200);
     }
-    setLoading(false);
   };
 
   const handleGoogleLogin = async () => {
+    setShowLoading(true);
+    setLoadingMessage("Connecting to Google Authentication...");
     const { error } = await api.auth.signInWithOAuth({
       provider: "google",
       options: { redirectTo: `${window.location.origin}/dashboard` },
     });
     if (error) {
+      setShowLoading(false);
       toast({ title: "Login Failed", description: error.message, variant: "destructive" });
     }
   };
 
   return (
     <PublicLayout>
+      {/* Full-screen Loading Screen only active during Login */}
+      {showLoading && <LoadingScreen message={loadingMessage} />}
+
       <div className="container flex items-center justify-center py-16">
         <Card className="w-full max-w-md shadow-xl border-border/60">
           <CardHeader className="text-center pb-4">
