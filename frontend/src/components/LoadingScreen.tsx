@@ -7,18 +7,24 @@ interface LoadingScreenProps {
 }
 
 export default function LoadingScreen({
-  message = "Authenticating & Launching Dashboard...",
+  message,
   onComplete,
-  speed = 90,
+  speed = 80,
 }: LoadingScreenProps) {
   const [progress, setProgress] = useState(5);
+  const [isFadingOut, setIsFadingOut] = useState(false);
 
   useEffect(() => {
     const interval = setInterval(() => {
       setProgress((prev) => {
         if (prev >= 100) {
           clearInterval(interval);
-          onComplete?.();
+          setTimeout(() => {
+            setIsFadingOut(true);
+            setTimeout(() => {
+              onComplete?.();
+            }, 300);
+          }, 250);
           return 100;
         }
         // Smooth random increment matching video playback
@@ -32,9 +38,18 @@ export default function LoadingScreen({
 
   const fillPercentage = Math.min(Math.max(progress, 0), 100);
 
+  // Dynamic message matching the user screenshot
+  const displayMessage =
+    message ||
+    (progress < 45
+      ? "Authenticating & Initializing..."
+      : "Access Granted! Launching Doctor Dashboard...");
+
   return (
     <div
-      className="fixed inset-0 z-[99999] flex flex-col items-center justify-center select-none animate-in fade-in duration-300"
+      className={`fixed inset-0 z-[99999] flex flex-col items-center justify-center select-none transition-opacity duration-300 ease-out ${
+        isFadingOut ? "opacity-0 pointer-events-none" : "opacity-100"
+      }`}
       style={{
         background: "radial-gradient(circle at 50% 35%, #185eb8 0%, #05358a 70%, #032563 100%)",
       }}
@@ -134,7 +149,7 @@ export default function LoadingScreen({
           </svg>
         </div>
 
-        {/* Animated Progress Bar (Matching Video) */}
+        {/* Animated Progress Bar (Matching Video & User Screenshot) */}
         <div className="mt-7 w-full max-w-xs sm:max-w-sm flex flex-col items-center">
           <div className="w-full h-3 rounded-full bg-white/15 border border-white/20 p-0.5 overflow-hidden backdrop-blur-sm shadow-inner relative">
             <div
@@ -147,7 +162,7 @@ export default function LoadingScreen({
           <div className="mt-3 flex items-center justify-between w-full text-xs font-medium text-sky-100/90 px-1">
             <span className="flex items-center gap-1.5">
               <span className="h-1.5 w-1.5 rounded-full bg-sky-300 animate-pulse" />
-              {message}
+              {displayMessage}
             </span>
             <span className="font-mono text-sky-200 font-semibold">{progress}%</span>
           </div>
