@@ -38,13 +38,6 @@ export default function LoadingScreen({
 
   const fillPercentage = Math.min(Math.max(progress, 0), 100);
 
-  // Dynamic message matching the user screenshot
-  const displayMessage =
-    message ||
-    (progress < 45
-      ? "Authenticating & Initializing..."
-      : "Access Granted! Launching Doctor Dashboard...");
-
   return (
     <div
       className={`fixed inset-0 z-[99999] flex flex-col items-center justify-center select-none transition-opacity duration-300 ease-out ${
@@ -147,25 +140,6 @@ export default function LoadingScreen({
               </text>
             )}
           </svg>
-        </div>
-
-        {/* Animated Progress Bar (Matching Video & User Screenshot) */}
-        <div className="mt-7 w-full max-w-xs sm:max-w-sm flex flex-col items-center">
-          <div className="w-full h-3 rounded-full bg-white/15 border border-white/20 p-0.5 overflow-hidden backdrop-blur-sm shadow-inner relative">
-            <div
-              className="h-full rounded-full bg-gradient-to-r from-sky-400 via-white to-sky-200 shadow-[0_0_12px_rgba(56,189,248,0.8)] transition-all duration-150 ease-out"
-              style={{ width: `${progress}%` }}
-            />
-          </div>
-
-          {/* Status text & percentage counter */}
-          <div className="mt-3 flex items-center justify-between w-full text-xs font-medium text-sky-100/90 px-1">
-            <span className="flex items-center gap-1.5">
-              <span className="h-1.5 w-1.5 rounded-full bg-sky-300 animate-pulse" />
-              {displayMessage}
-            </span>
-            <span className="font-mono text-sky-200 font-semibold">{progress}%</span>
-          </div>
         </div>
       </div>
     </div>
