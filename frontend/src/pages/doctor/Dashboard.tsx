@@ -11,7 +11,15 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { api } from "@/services/api";
 import { useToast } from "@/hooks/use-toast";
 import { maskPassport, maskPhone } from "@/lib/validators";
-import { Eye, Send, RefreshCw, Users, Clock, CheckCircle2, Mail, Loader2, Paperclip, ZoomIn, Copy, FileText, ExternalLink } from "lucide-react";
+import { Eye, Send, RefreshCw, Users, Clock, CheckCircle2, Mail, Loader2, Paperclip, ZoomIn, Copy, FileText, ExternalLink, Image as ImageIcon, AlertTriangle } from "lucide-react";
+
+interface PreviewDocState {
+  rawUrl: string;
+  viewUrl: string;
+  fileName: string;
+  isPdf: boolean;
+  isImage: boolean;
+}
 
 interface ConsultationRow {
   id: string;
@@ -75,7 +83,15 @@ export default function DoctorDashboard() {
   const [savingDiagnosis, setSavingDiagnosis] = useState(false);
   const [savingLink, setSavingLink] = useState(false);
   const [sendingEmail, setSendingEmail] = useState(false);
-  const [previewImage, setPreviewImage] = useState<string | null>(null);
+  const [previewDoc, setPreviewDoc] = useState<PreviewDocState | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewError, setPreviewError] = useState<string | null>(null);
+
+  const handleOpenPreview = (doc: PreviewDocState) => {
+    setPreviewDoc(doc);
+    setPreviewLoading(true);
+    setPreviewError(null);
+  };
 
   const fetchConsultations = useCallback(async () => {
     const { data } = await api.consultations.getQueue();
@@ -392,10 +408,20 @@ export default function DoctorDashboard() {
                       return (
                         <div className="grid gap-3 sm:grid-cols-2">
                           {urls.map((rawUrl, idx) => {
-                            const url = rawUrl.startsWith("http") ? rawUrl : `http://localhost:5000${rawUrl}`;
-                            const isImage = /\.(jpg|jpeg|png|webp|gif)($|\?)/i.test(url) || url.includes('/image/upload/');
-                            const rawName = url.split('/').pop()?.split('?')[0] || `Document ${idx + 1}`;
+                            const cleanUrl = rawUrl.split('?')[0];
+                            const rawName = cleanUrl.split('/').pop() || `Document ${idx + 1}`;
                             const fileName = decodeURIComponent(rawName);
+                            const isPdf = /\.pdf($|\?)/i.test(cleanUrl);
+                            const isImage = /\.(jpg|jpeg|png|webp|gif|svg)($|\?)/i.test(cleanUrl);
+                            const authorizedViewUrl = api.documents.getViewUrl(rawUrl);
+
+                            const docState: PreviewDocState = {
+                              rawUrl,
+                              viewUrl: authorizedViewUrl,
+                              fileName,
+                              isPdf,
+                              isImage,
+                            };
 
                             return (
                               <div
@@ -404,24 +430,39 @@ export default function DoctorDashboard() {
                               >
                                 <div className="flex items-start gap-3">
                                   {/* Preview thumbnail or PDF Icon */}
-                                  {isImage ? (
+                                  {isPdf ? (
+                                    <div
+                                      className="flex h-14 w-14 shrink-0 flex-col items-center justify-center rounded-md bg-red-100 text-red-600 dark:bg-red-950/60 dark:text-red-400 font-bold text-[10px] cursor-pointer hover:bg-red-200 transition-colors"
+                                      onClick={() => handleOpenPreview(docState)}
+                                      title="Click to preview PDF document"
+                                    >
+                                      <FileText className="h-6 w-6 mb-0.5" />
+                                      PDF
+                                    </div>
+                                  ) : isImage ? (
                                     <div
                                       className="relative h-14 w-14 shrink-0 cursor-pointer overflow-hidden rounded-md border bg-muted"
-                                      onClick={() => setPreviewImage(url)}
+                                      onClick={() => handleOpenPreview(docState)}
                                       title="Click to zoom image"
                                     >
                                       <img
-                                        src={url}
+                                        src={authorizedViewUrl}
                                         alt={fileName}
                                         className="h-full w-full object-cover transition-transform group-hover:scale-105"
+                                        onError={(e) => {
+                                          e.currentTarget.style.display = 'none';
+                                        }}
                                       />
                                       <div className="absolute inset-0 flex items-center justify-center bg-black/30 opacity-0 transition-opacity group-hover:opacity-100">
                                         <ZoomIn className="h-4 w-4 text-white" />
                                       </div>
                                     </div>
                                   ) : (
-                                    <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-md bg-red-100 text-red-600 dark:bg-red-950/60 dark:text-red-400 font-bold text-xs">
-                                      <FileText className="h-6 w-6" />
+                                    <div
+                                      className="flex h-14 w-14 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground cursor-pointer"
+                                      onClick={() => handleOpenPreview(docState)}
+                                    >
+                                      <Paperclip className="h-6 w-6" />
                                     </div>
                                   )}
 
@@ -430,7 +471,7 @@ export default function DoctorDashboard() {
                                       {fileName}
                                     </p>
                                     <p className="mt-0.5 text-[11px] text-muted-foreground flex items-center gap-1">
-                                      {url.includes('cloudinary.com') ? (
+                                      {rawUrl.includes('cloudinary.com') ? (
                                         <span className="inline-flex items-center text-emerald-600 dark:text-emerald-400 font-medium">
                                           Cloudinary Secure Cloud
                                         </span>
@@ -442,24 +483,22 @@ export default function DoctorDashboard() {
                                 </div>
 
                                 <div className="mt-3 flex items-center gap-2 border-t pt-2">
-                                  {isImage && (
-                                    <Button
-                                      type="button"
-                                      size="sm"
-                                      variant="outline"
-                                      className="h-7 text-xs flex-1"
-                                      onClick={() => setPreviewImage(url)}
-                                    >
-                                      <ZoomIn className="mr-1 h-3.5 w-3.5" /> Preview
-                                    </Button>
-                                  )}
+                                  <Button
+                                    type="button"
+                                    size="sm"
+                                    variant="outline"
+                                    className="h-7 text-xs flex-1"
+                                    onClick={() => handleOpenPreview(docState)}
+                                  >
+                                    <ZoomIn className="mr-1 h-3.5 w-3.5" /> Preview
+                                  </Button>
                                   <Button
                                     asChild
                                     size="sm"
-                                    variant={isImage ? "ghost" : "outline"}
+                                    variant="outline"
                                     className="h-7 text-xs flex-1"
                                   >
-                                    <a href={url} target="_blank" rel="noopener noreferrer">
+                                    <a href={authorizedViewUrl} target="_blank" rel="noopener noreferrer">
                                       <ExternalLink className="mr-1 h-3.5 w-3.5" /> Open
                                     </a>
                                   </Button>
@@ -469,8 +508,8 @@ export default function DoctorDashboard() {
                                     variant="ghost"
                                     className="h-7 px-2 text-xs text-muted-foreground hover:text-foreground"
                                     onClick={() => {
-                                      navigator.clipboard.writeText(url);
-                                      toast({ title: "Link Copied", description: "Document URL copied to clipboard." });
+                                      navigator.clipboard.writeText(authorizedViewUrl);
+                                      toast({ title: "Link Copied", description: "Secure document URL copied to clipboard." });
                                     }}
                                     title="Copy direct document URL"
                                   >
@@ -595,26 +634,73 @@ export default function DoctorDashboard() {
         </DialogContent>
       </Dialog>
 
-      {/* Document Image Zoom / Lightbox Dialog */}
-      <Dialog open={Boolean(previewImage)} onOpenChange={(open) => !open && setPreviewImage(null)}>
-        <DialogContent className="max-w-3xl max-h-[90vh] p-4 flex flex-col items-center">
-          <DialogHeader className="w-full flex flex-row items-center justify-between pb-2">
-            <DialogTitle className="text-base font-semibold">Medical Document Preview</DialogTitle>
-            {previewImage && (
+      {/* Document Preview Dialog (PDF & Images) */}
+      <Dialog open={Boolean(previewDoc)} onOpenChange={(open) => !open && setPreviewDoc(null)}>
+        <DialogContent className="max-w-4xl max-h-[92vh] p-4 flex flex-col items-center">
+          <DialogHeader className="w-full flex flex-row items-center justify-between pb-2 border-b">
+            <div className="flex items-center gap-2 max-w-[70%]">
+              {previewDoc?.isPdf ? (
+                <FileText className="h-5 w-5 text-red-500 shrink-0" />
+              ) : (
+                <ImageIcon className="h-5 w-5 text-primary shrink-0" />
+              )}
+              <DialogTitle className="text-sm font-semibold truncate" title={previewDoc?.fileName}>
+                {previewDoc?.fileName || "Medical Document Preview"}
+              </DialogTitle>
+            </div>
+            {previewDoc && (
               <Button asChild size="sm" variant="outline" className="h-8">
-                <a href={previewImage} target="_blank" rel="noopener noreferrer">
-                  <ExternalLink className="mr-1 h-3.5 w-3.5" /> Open Full Image
+                <a href={previewDoc.viewUrl} target="_blank" rel="noopener noreferrer">
+                  <ExternalLink className="mr-1 h-3.5 w-3.5" />
+                  {previewDoc.isPdf ? "Open Full Document" : "Open Full Image"}
                 </a>
               </Button>
             )}
           </DialogHeader>
-          {previewImage && (
-            <div className="relative flex-1 w-full flex items-center justify-center overflow-auto rounded-lg bg-black/5 p-2">
-              <img
-                src={previewImage}
-                alt="Document preview"
-                className="max-h-[70vh] w-auto max-w-full rounded object-contain shadow-md"
-              />
+
+          {previewDoc && (
+            <div className="relative flex-1 w-full flex items-center justify-center overflow-auto rounded-lg bg-muted/20 p-2 min-h-[50vh] max-h-[75vh]">
+              {previewLoading && (
+                <div className="absolute inset-0 flex flex-col items-center justify-center bg-background/80 z-10 gap-2">
+                  <Loader2 className="h-8 w-8 animate-spin text-primary" />
+                  <span className="text-xs text-muted-foreground font-medium">Loading secure document...</span>
+                </div>
+              )}
+
+              {previewError ? (
+                <div className="flex flex-col items-center justify-center p-8 text-center max-w-md">
+                  <AlertTriangle className="h-10 w-10 text-amber-500 mb-2" />
+                  <h4 className="text-sm font-semibold text-foreground">Document Preview Unavailable</h4>
+                  <p className="text-xs text-muted-foreground mt-1 mb-4">{previewError}</p>
+                  <Button asChild size="sm" variant="default">
+                    <a href={previewDoc.viewUrl} target="_blank" rel="noopener noreferrer">
+                      <ExternalLink className="mr-1 h-3.5 w-3.5" /> Try Opening in New Tab
+                    </a>
+                  </Button>
+                </div>
+              ) : previewDoc.isPdf ? (
+                <iframe
+                  src={previewDoc.viewUrl}
+                  title={previewDoc.fileName}
+                  className="w-full h-[72vh] rounded border bg-white shadow-xs"
+                  onLoad={() => setPreviewLoading(false)}
+                  onError={() => {
+                    setPreviewLoading(false);
+                    setPreviewError("Unable to embed PDF preview. Please open the document in a new tab.");
+                  }}
+                />
+              ) : (
+                <img
+                  src={previewDoc.viewUrl}
+                  alt={previewDoc.fileName}
+                  className="max-h-[72vh] w-auto max-w-full rounded object-contain shadow-md"
+                  onLoad={() => setPreviewLoading(false)}
+                  onError={() => {
+                    setPreviewLoading(false);
+                    setPreviewError("Failed to load image preview. Please open the document in a new tab.");
+                  }}
+                />
+              )}
             </div>
           )}
         </DialogContent>

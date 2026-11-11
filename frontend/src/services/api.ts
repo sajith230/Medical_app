@@ -804,4 +804,23 @@ export const api = {
       };
     },
   },
+
+  // Secure Medical Documents
+  documents: {
+    getViewUrl(rawUrl: string): string {
+      const session = getStoredSession();
+      const token = session?.token || '';
+      return `${API_URL}/documents/view?url=${encodeURIComponent(rawUrl)}&token=${encodeURIComponent(token)}`;
+    },
+    async getAccess(rawUrl: string) {
+      return request<{
+        fileName: string;
+        isPdf: boolean;
+        isImage: boolean;
+        viewUrl: string;
+        thumbnailUrl: string;
+        expiresIn: number;
+      }>(`/documents/access?url=${encodeURIComponent(rawUrl)}`);
+    },
+  },
 };
