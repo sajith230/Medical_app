@@ -9,7 +9,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { api } from "@/services/api";
-import { patientIntakeSchema, type PatientIntakeForm } from "@/lib/validators";
+import { patientIntakeSchema, getTodayDateString, type PatientIntakeForm } from "@/lib/validators";
 import { useToast } from "@/hooks/use-toast";
 import { Link } from "react-router-dom";
 
@@ -21,6 +21,8 @@ interface FormFieldProps {
   placeholder?: string;
   value?: string;
   error?: string;
+  min?: string;
+  max?: string;
   onChange: (value: string) => void;
 }
 
@@ -32,6 +34,8 @@ function FormField({
   placeholder = "",
   value = "",
   error,
+  min,
+  max,
   onChange,
 }: FormFieldProps) {
   return (
@@ -46,6 +50,8 @@ function FormField({
         value={value}
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
+        min={min}
+        max={max}
         className={error ? "border-destructive" : ""}
       />
       {error && <p className="mt-1 text-xs text-destructive">{error}</p>}
@@ -54,6 +60,7 @@ function FormField({
 }
 
 export default function IntakeForm() {
+  const today = getTodayDateString();
   const [form, setForm] = useState<Partial<PatientIntakeForm>>({ consent_given: false as any });
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(false);
@@ -123,7 +130,7 @@ export default function IntakeForm() {
               </CardDescription>
             </CardHeader>
             <CardContent>
-              <form onSubmit={handleSubmit} className="space-y-6">
+              <form noValidate onSubmit={handleSubmit} className="space-y-6">
                 <div className="space-y-4">
                   <h3 className="font-semibold">Personal Details</h3>
                   <FormField
@@ -158,6 +165,7 @@ export default function IntakeForm() {
                       name="date_of_birth"
                       label="Date of Birth"
                       type="date"
+                      max={today}
                       value={form.date_of_birth}
                       error={errors.date_of_birth}
                       onChange={(val) => update("date_of_birth", val)}
@@ -188,6 +196,7 @@ export default function IntakeForm() {
                       name="passport_expiry"
                       label="Passport Expiry Date"
                       type="date"
+                      min={today}
                       required={false}
                       value={form.passport_expiry}
                       error={errors.passport_expiry}

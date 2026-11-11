@@ -33,6 +33,25 @@ export async function createPatient(req: Request, res: Response): Promise<void> 
   const consent = _consent_given !== undefined ? _consent_given : (consent_given !== undefined ? consent_given : true);
   const uId = _user_id || user_id || null;
 
+  const now = new Date();
+  const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+
+  if (dob) {
+    const dobStr = typeof dob === 'string' ? dob.split('T')[0] : '';
+    if (dobStr > todayStr) {
+      res.status(400).json({ message: 'Date of Birth cannot be a future date.' });
+      return;
+    }
+  }
+
+  if (passExp) {
+    const expStr = typeof passExp === 'string' ? passExp.split('T')[0] : '';
+    if (expStr && expStr < todayStr) {
+      res.status(400).json({ message: 'Passport Expiry Date cannot be in the past.' });
+      return;
+    }
+  }
+
   const trackingCode = crypto.randomBytes(3).toString('hex').toUpperCase();
 
   try {

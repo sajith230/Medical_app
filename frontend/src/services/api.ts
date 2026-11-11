@@ -248,6 +248,10 @@ export const api = {
         return { data: [res.data], error: null };
       }
 
+      if (res.error && !res.error.message.includes('fetch')) {
+        return { data: null, error: res.error };
+      }
+
       // Fallback local storage for smooth UI continuity
       const trackingCode = Math.random().toString(36).substring(2, 8).toUpperCase();
       const patient: Patient = {
