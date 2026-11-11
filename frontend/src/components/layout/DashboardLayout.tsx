@@ -10,7 +10,6 @@ import {
   FileText,
   CreditCard,
   ScrollText,
-  Stethoscope,
   BarChart3,
   Menu,
 } from "lucide-react";
@@ -56,10 +55,13 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
       {/* Desktop Permanent Sidebar */}
       <aside className="hidden w-64 flex-col border-r bg-card md:flex">
         <div className="flex h-16 items-center gap-2 border-b px-6">
-          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary">
-            <Stethoscope className="h-4 w-4 text-primary-foreground" />
-          </div>
-          <span className="font-display text-lg font-bold">MedConsult</span>
+          <Link to="/dashboard" className="flex items-center gap-2">
+            <img
+              src="/image 26.svg"
+              alt="ChatDr Logo"
+              className="h-10 w-auto object-contain"
+            />
+          </Link>
         </div>
         <nav className="flex flex-1 flex-col gap-1 p-4">
           {links.map((link) => (
@@ -89,12 +91,13 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
       <div className="flex flex-1 flex-col min-w-0">
         {/* Mobile Header with Menu on Right */}
         <header className="flex h-16 items-center justify-between border-b bg-card px-4 md:hidden">
-          {/* Left: MedConsult Logo */}
+          {/* Left: ChatDr Logo */}
           <Link to="/dashboard" className="flex items-center gap-2">
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary">
-              <Stethoscope className="h-4 w-4 text-primary-foreground" />
-            </div>
-            <span className="font-display font-bold">MedConsult</span>
+            <img
+              src="/image 26.svg"
+              alt="ChatDr Logo"
+              className="h-9 w-auto object-contain"
+            />
           </Link>
 
           {/* Right: Mobile Menu Icon */}
@@ -107,10 +110,13 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
             </SheetTrigger>
             <SheetContent side="right" className="w-72 p-0 flex flex-col">
               <div className="flex h-16 items-center gap-2 border-b px-6">
-                <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary">
-                  <Stethoscope className="h-4 w-4 text-primary-foreground" />
-                </div>
-                <span className="font-display text-lg font-bold">MedConsult</span>
+                <Link to="/dashboard" onClick={() => setMobileOpen(false)} className="flex items-center gap-2">
+                  <img
+                    src="/image 26.svg"
+                    alt="ChatDr Logo"
+                    className="h-10 w-auto object-contain"
+                  />
+                </Link>
               </div>
               <nav className="flex flex-1 flex-col gap-1 p-4 overflow-y-auto">
                 {links.map((link) => (
