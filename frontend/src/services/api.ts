@@ -8,6 +8,8 @@ import type {
   TrackingData,
   User,
   Session,
+  DoctorReportsData,
+  FinancialReportsData,
 } from '@/types/database';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
@@ -750,58 +752,19 @@ export const api = {
 
   // Reports
   reports: {
-    async getDoctorStats() {
-      const res = await request<{ total: number; completed: number; revenue: number; avgWait: number }>('/reports/doctor');
-      if (!res.error && res.data) return res;
-
-      // Calculate from local data
-      const consults: Consultation[] = JSON.parse(localStorage.getItem(MOCK_CONSULTATIONS_KEY) || '[]');
-      const payments: Payment[] = JSON.parse(localStorage.getItem(MOCK_PAYMENTS_KEY) || '[]');
-
-      const total = consults.length;
-      const completed = consults.filter((c) => c.status === 'completed').length;
-      const revenue = payments.filter((p) => p.status === 'completed').reduce((sum, p) => sum + p.amount_cents, 0);
-
-      const waits = consults
-        .filter((c) => c.started_at && c.created_at)
-        .map((c) => (new Date(c.started_at!).getTime() - new Date(c.created_at).getTime()) / 60000);
-      const avgWait = waits.length ? Math.round(waits.reduce((a, b) => a + b, 0) / waits.length) : 12;
-
-      return {
-        data: { total: total || 1, completed, revenue: revenue || 15000, avgWait },
-        error: null,
-      };
+    async getDoctorStats(range: string = 'all') {
+      const res = await request<DoctorReportsData>(`/reports/doctor?range=${encodeURIComponent(range)}`);
+      return res;
     },
 
-    async getAdminStats() {
-      const res = await request<{
-        total: number;
-        completed: number;
-        revenue: number;
-        cancelled: number;
-        consultations: Consultation[];
-      }>('/reports/admin');
-
-      if (!res.error && res.data) return res;
-
-      const consults: Consultation[] = JSON.parse(localStorage.getItem(MOCK_CONSULTATIONS_KEY) || '[]');
-      const payments: Payment[] = JSON.parse(localStorage.getItem(MOCK_PAYMENTS_KEY) || '[]');
-
-      const total = consults.length || 1;
-      const completed = consults.filter((c) => c.status === 'completed').length;
-      const cancelled = consults.filter((c) => c.status === 'cancelled').length;
-      const revenue = payments.filter((p) => p.status === 'completed').reduce((sum, p) => sum + p.amount_cents, 0) || 15000;
-
-      return {
-        data: {
-          total,
-          completed,
-          cancelled,
-          revenue,
-          consultations: consults,
-        },
-        error: null,
-      };
+    async getAdminStats(params?: { range?: string; status?: string; type?: string }) {
+      const query = new URLSearchParams();
+      if (params?.range) query.set('range', params.range);
+      if (params?.status) query.set('status', params.status);
+      if (params?.type) query.set('type', params.type);
+      const queryString = query.toString() ? `?${query.toString()}` : '';
+      const res = await request<FinancialReportsData>(`/reports/admin${queryString}`);
+      return res;
     },
   },
 

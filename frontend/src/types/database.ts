@@ -165,3 +165,121 @@ export interface TrackingData {
   follow_up_notes?: string | null;
 }
 
+export interface DoctorReportsData {
+  overview: {
+    totalConsultations: number;
+    completedConsultations: number;
+    pendingConsultations: number;
+    cancelledConsultations: number;
+    paidConsultations: number;
+    inProgressConsultations: number;
+  };
+  statusDistribution: Array<{
+    name: string;
+    value: number;
+    status: string;
+    fill: string;
+  }>;
+  typeBreakdown: Array<{
+    type: string;
+    count: number;
+    percentage: number;
+  }>;
+  trends: {
+    daily: Array<{
+      date: string;
+      label: string;
+      total: number;
+      completed: number;
+      cancelled: number;
+      active: number;
+    }>;
+    monthly: Array<{
+      month: string;
+      label: string;
+      total: number;
+      completed: number;
+      cancelled: number;
+    }>;
+  };
+  patientAnalytics: {
+    totalPatients: number;
+    newPatientsPeriod: number;
+    newPatients7d: number;
+    newPatients30d: number;
+    registrationTrends: Array<{
+      date: string;
+      label: string;
+      count: number;
+    }>;
+  };
+  doctorAnalytics: {
+    totalDoctors: number;
+    activeDoctors: number;
+    doctors: Array<{
+      id: string;
+      name: string;
+      email: string;
+      role: string;
+      consultationsHandled: number;
+      inQueue: number;
+      status: string;
+    }>;
+  };
+  recentActivity: Array<{
+    id: string;
+    status: string;
+    priority_score: number;
+    created_at: string;
+    started_at: string | null;
+    completed_at: string | null;
+    patient_name: string;
+    patient_email: string;
+    nationality: string;
+    consultation_type: string;
+  }>;
+  filterRange: string;
+}
+
+export interface FinancialReportsData {
+  financialOverview: {
+    totalRevenue: number;
+    monthlyRevenue: number;
+    pendingAmount: number;
+    refundedAmount: number;
+  };
+  paymentAnalytics: {
+    successfulPayments: number;
+    failedPayments: number;
+    pendingTransactions: number;
+    refundedTransactions: number;
+    totalTransactions: number;
+  };
+  revenueAnalytics: {
+    daily: Array<{ date: string; label: string; revenue: number; count: number }>;
+    monthly: Array<{ month: string; label: string; revenue: number; count: number }>;
+    yearly: Array<{ year: string; label: string; revenue: number; count: number }>;
+    byType: Array<{ type: string; typeKey: string; revenue: number; count: number; percentage: number }>;
+  };
+  transactions: Array<{
+    id: string;
+    consultationId: string;
+    amountCents: number;
+    currency: string;
+    status: string;
+    cardBrand: string;
+    cardLast4: string;
+    stripePaymentId: string;
+    createdAt: string;
+    patientName: string;
+    patientEmail: string;
+    consultationType: string;
+    consultationTypeKey: string;
+  }>;
+  filters: {
+    range: string;
+    status: string;
+    type: string;
+  };
+}
+
