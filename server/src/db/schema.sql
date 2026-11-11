@@ -155,6 +155,7 @@ CREATE TABLE IF NOT EXISTS consultations (
   medical_precheck_id UUID REFERENCES medical_prechecks(id),
   status consultation_status NOT NULL DEFAULT 'pending',
   priority_score INTEGER NOT NULL DEFAULT 0,
+  booking_session_id TEXT,
   consultation_link TEXT,
   diagnosis TEXT,
   prescription TEXT,
@@ -170,6 +171,7 @@ CREATE TABLE IF NOT EXISTS consultations (
 CREATE INDEX IF NOT EXISTS idx_consultations_patient_id ON consultations(patient_id);
 CREATE INDEX IF NOT EXISTS idx_consultations_status ON consultations(status);
 CREATE INDEX IF NOT EXISTS idx_consultations_priority ON consultations(priority_score DESC, created_at ASC);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_consultations_booking_session ON consultations(booking_session_id);
 
 DROP TRIGGER IF EXISTS trg_consultations_updated_at ON consultations;
 CREATE TRIGGER trg_consultations_updated_at

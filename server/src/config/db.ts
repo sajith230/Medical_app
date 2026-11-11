@@ -34,11 +34,16 @@ export async function testConnection(): Promise<boolean> {
     const client = await pool.connect();
     const res = await client.query('SELECT NOW()');
     
-    // Auto-migration for payment security fields
+    // Auto-migration for payment security fields & consultation booking session idempotency
     await client.query(`
       ALTER TABLE payments ADD COLUMN IF NOT EXISTS card_brand TEXT;
       ALTER TABLE payments ADD COLUMN IF NOT EXISTS card_last4 TEXT;
-    `).catch(() => {});
+      ALTER TABLE consultations ADD COLUMN IF NOT EXISTS booking_session_id TEXT;
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_consultations_booking_session
+      ON consultations (booking_session_id);
+    `).catch((err) => {
+      console.warn('[PostgreSQL Migration Warning]', err.message);
+    });
 
     client.release();
     isConnected = true;

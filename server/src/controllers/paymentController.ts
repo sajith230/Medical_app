@@ -2,6 +2,7 @@ import type { Request, Response } from 'express';
 import crypto from 'crypto';
 import { pool, query, isDbConnected } from '../config/db.js';
 import type { AuthenticatedRequest } from '../middleware/authMiddleware.js';
+import { memoryConsultations } from './consultationController.js';
 
 // In-memory rate limiting map for payment attempts: IP -> { count, resetTime }
 const rateLimitMap = new Map<string, { count: number; resetTime: number }>();
@@ -147,11 +148,33 @@ export async function processPayment(req: Request, res: Response): Promise<void>
 
       const consult = consultRes.rows[0];
 
-      // Anti-Double-Payment Guard
+      // Anti-Double-Payment Guard: Handle duplicate payment callbacks / retries gracefully
       if (consult.status === 'paid' || consult.status === 'completed') {
-        await client.query('ROLLBACK');
+        const existingPaymentRes = await client.query(
+          `SELECT id, amount_cents, currency, status, stripe_payment_id, card_brand, card_last4
+           FROM payments
+           WHERE consultation_id = $1
+           ORDER BY created_at DESC LIMIT 1`,
+          [cId]
+        );
+        await client.query('COMMIT');
         client.release();
-        res.status(409).json({ message: 'This consultation is already paid for.', code: 'ALREADY_PAID' });
+
+        const existingPayment = existingPaymentRes.rows[0];
+        res.json({
+          success: true,
+          message: 'Payment already verified for this consultation',
+          data: {
+            payment_id: existingPayment?.id || null,
+            transaction_ref: existingPayment?.stripe_payment_id || null,
+            amount_cents: existingPayment?.amount_cents || consult.price_cents,
+            currency: existingPayment?.currency || 'usd',
+            status: 'completed',
+            card_brand: existingPayment?.card_brand || cardBrand,
+            card_last4: existingPayment?.card_last4 || cardLast4,
+            already_paid: true,
+          },
+        });
         return;
       }
 
@@ -185,6 +208,16 @@ export async function processPayment(req: Request, res: Response): Promise<void>
          WHERE id = $1`,
         [cId]
       );
+
+      // Cancel any older orphaned pending consultations for this patient to ensure only ONE record exists in the queue
+      if (consult.patient_id) {
+        await client.query(
+          `UPDATE consultations
+           SET status = 'cancelled', updated_at = NOW()
+           WHERE patient_id = $1 AND id != $2 AND status = 'pending'`,
+          [consult.patient_id, cId]
+        ).catch(() => {});
+      }
 
       // Create immutable audit log entry
       await client.query(
@@ -232,6 +265,18 @@ export async function processPayment(req: Request, res: Response): Promise<void>
   }
 
   // Fallback demo simulator if DB is unreachable
+  const consult = memoryConsultations.find(c => c.id === cId);
+  if (consult) {
+    consult.status = 'paid';
+    consult.updated_at = new Date().toISOString();
+    memoryConsultations.forEach(c => {
+      if (c.patient_id === consult.patient_id && c.id !== cId && c.status === 'pending') {
+        c.status = 'cancelled';
+        c.updated_at = new Date().toISOString();
+      }
+    });
+  }
+
   res.json({
     success: true,
     data: {

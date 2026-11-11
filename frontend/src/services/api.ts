@@ -406,6 +406,8 @@ export const api = {
       consultation_type_id: string;
       medical_precheck_id?: string | null;
       priority_score?: number;
+      consultation_id?: string;
+      booking_session_id?: string;
     }) {
       const res = await request<{ id: string }>('/consultations', {
         method: 'POST',
@@ -416,7 +418,10 @@ export const api = {
         return { data: res.data.id, error: null };
       }
 
-      const id = `cns_${Date.now()}`;
+      if (res.error && !res.error.message.includes('fetch')) {
+        return { data: null, error: res.error };
+      }
+
       const mockConsultations: Consultation[] = JSON.parse(localStorage.getItem(MOCK_CONSULTATIONS_KEY) || '[]');
       const patients: Patient[] = JSON.parse(localStorage.getItem(MOCK_PATIENTS_KEY) || '[]');
       const patient = patients.find((p) => p.id === data.patient_id);
@@ -425,6 +430,26 @@ export const api = {
       const mockPrechecks = JSON.parse(localStorage.getItem('medilanka_mock_prechecks') || '{}');
       const precheck = data.medical_precheck_id ? mockPrechecks[data.medical_precheck_id] : null;
 
+      // Check if consultation already exists for consultation_id, booking_session_id, or (patient_id + pending)
+      let existingIndex = mockConsultations.findIndex((c) =>
+        (data.consultation_id && c.id === data.consultation_id) ||
+        (data.booking_session_id && (c as any).booking_session_id === data.booking_session_id) ||
+        (c.patient_id === data.patient_id && c.status === 'pending')
+      );
+
+      if (existingIndex >= 0) {
+        const existing = mockConsultations[existingIndex];
+        existing.consultation_type_id = data.consultation_type_id;
+        existing.priority_score = data.priority_score || type?.priority_score || 0;
+        existing.consultation_types = type ? { display_name: type.display_name, name: type.name } : undefined;
+        if (data.medical_precheck_id) existing.medical_precheck_id = data.medical_precheck_id;
+        if (data.booking_session_id) (existing as any).booking_session_id = data.booking_session_id;
+        existing.updated_at = new Date().toISOString();
+        localStorage.setItem(MOCK_CONSULTATIONS_KEY, JSON.stringify(mockConsultations));
+        return { data: existing.id, error: null };
+      }
+
+      const id = data.consultation_id || `cns_${Date.now()}`;
       const newConsult: Consultation = {
         id,
         patient_id: data.patient_id,
@@ -432,6 +457,7 @@ export const api = {
         medical_precheck_id: data.medical_precheck_id || null,
         status: 'pending',
         priority_score: data.priority_score || type?.priority_score || 0,
+        booking_session_id: data.booking_session_id || null,
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
         patients: patient,
@@ -629,24 +655,34 @@ export const api = {
 
       // Mock payment fallback
       const storedPayments: Payment[] = JSON.parse(localStorage.getItem(MOCK_PAYMENTS_KEY) || '[]');
-      const newPayment: Payment = {
-        id: `pay_${Date.now()}`,
-        consultation_id: data.consultation_id,
-        stripe_payment_id: data.stripe_payment_id || `sim_${Date.now()}`,
-        amount_cents: data.amount_cents || 10000,
-        currency: data.currency || 'usd',
-        status: 'completed',
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      };
-      storedPayments.push(newPayment);
-      localStorage.setItem(MOCK_PAYMENTS_KEY, JSON.stringify(storedPayments));
+      const existingPayment = storedPayments.find((p) => p.consultation_id === data.consultation_id);
+      if (!existingPayment) {
+        const newPayment: Payment = {
+          id: `pay_${Date.now()}`,
+          consultation_id: data.consultation_id,
+          stripe_payment_id: data.stripe_payment_id || `sim_${Date.now()}`,
+          amount_cents: data.amount_cents || 10000,
+          currency: data.currency || 'usd',
+          status: 'completed',
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        };
+        storedPayments.push(newPayment);
+        localStorage.setItem(MOCK_PAYMENTS_KEY, JSON.stringify(storedPayments));
+      }
 
-      // Also update consultation status to 'paid' in mock
+      // Also update consultation status to 'paid' in mock, and cancel any duplicate pending ones for this patient
       const storedConsults: Consultation[] = JSON.parse(localStorage.getItem(MOCK_CONSULTATIONS_KEY) || '[]');
-      const updatedConsults = storedConsults.map((c) =>
-        c.id === data.consultation_id ? { ...c, status: 'paid' as const } : c
-      );
+      const targetConsult = storedConsults.find((c) => c.id === data.consultation_id);
+      const updatedConsults = storedConsults.map((c) => {
+        if (c.id === data.consultation_id) {
+          return { ...c, status: 'paid' as const, updated_at: new Date().toISOString() };
+        }
+        if (targetConsult && c.patient_id === targetConsult.patient_id && c.status === 'pending') {
+          return { ...c, status: 'cancelled' as const, updated_at: new Date().toISOString() };
+        }
+        return c;
+      });
       localStorage.setItem(MOCK_CONSULTATIONS_KEY, JSON.stringify(updatedConsults));
 
       return { error: null };

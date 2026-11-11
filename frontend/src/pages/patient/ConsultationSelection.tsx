@@ -35,7 +35,23 @@ export default function ConsultationSelection() {
   const patientId = sessionStorage.getItem("patient_id");
   const precheckId = sessionStorage.getItem("precheck_id");
 
+  const getBookingSessionId = (): string => {
+    let sessionId = sessionStorage.getItem("booking_session_id");
+    if (!sessionId) {
+      sessionId = typeof crypto !== "undefined" && crypto.randomUUID
+        ? crypto.randomUUID()
+        : `bk_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+      sessionStorage.setItem("booking_session_id", sessionId);
+    }
+    return sessionId;
+  };
+
   useEffect(() => {
+    const savedTypeId = sessionStorage.getItem("selected_type_id");
+    if (savedTypeId) {
+      setSelected(savedTypeId);
+    }
+
     api.consultations.getTypes().then(({ data }) => {
       if (data) setTypes(data as any as ConsultationType[]);
     });
@@ -54,24 +70,30 @@ export default function ConsultationSelection() {
   }
 
   const handleContinue = async () => {
-    if (!selected) return;
+    if (!selected || loading) return;
     setLoading(true);
 
     const type = types.find((t) => t.id === selected)!;
+    const bookingSessionId = getBookingSessionId();
+    const existingConsultationId = sessionStorage.getItem("consultation_id");
+
     const { data: consultationId, error } = await api.consultations.create({
+      consultation_id: existingConsultationId || undefined,
+      booking_session_id: bookingSessionId,
       patient_id: patientId,
       consultation_type_id: selected,
       medical_precheck_id: precheckId || null,
       priority_score: type.priority_score,
     });
 
-    if (error) {
+    if (error || !consultationId) {
       toast({ title: "Error", description: "Failed to create consultation.", variant: "destructive" });
       setLoading(false);
       return;
     }
 
     sessionStorage.setItem("consultation_id", consultationId);
+    sessionStorage.setItem("selected_type_id", selected);
     sessionStorage.setItem("selected_type_price", String(type.price_cents));
     sessionStorage.setItem("selected_type_name", type.display_name);
     navigate("/consultation/payment");

@@ -78,6 +78,7 @@ export interface Consultation {
   medical_precheck_id?: string | null;
   status: ConsultationStatus;
   priority_score: number;
+  booking_session_id?: string | null;
   consultation_link?: string | null;
   diagnosis?: string | null;
   prescription?: string | null;

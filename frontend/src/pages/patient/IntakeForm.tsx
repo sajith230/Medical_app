@@ -112,6 +112,9 @@ export default function IntakeForm() {
     const patient = data[0];
     sessionStorage.setItem("patient_id", patient.id);
     sessionStorage.setItem("tracking_code", patient.tracking_code);
+    sessionStorage.removeItem("consultation_id");
+    sessionStorage.removeItem("booking_session_id");
+    sessionStorage.removeItem("selected_type_id");
     navigate("/consultation/medical-precheck");
   };
 
