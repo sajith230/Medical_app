@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { viewDocument, getDocumentAccess } from '../controllers/documentController.js';
+import { viewDocument, getDocumentAccess, deleteDocument } from '../controllers/documentController.js';
 
 const router = Router();
 
@@ -8,6 +8,9 @@ router.get('/view', viewDocument);
 
 // Get short-lived authorized URLs and metadata for a document
 router.get('/access', getDocumentAccess);
+
+// Delete document (soft/hard delete)
+router.delete('/:id', deleteDocument);
 
 export default router;
 

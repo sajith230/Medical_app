@@ -44,6 +44,9 @@ export async function testConnection(): Promise<boolean> {
       ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS user_name TEXT;
       ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS user_email TEXT;
       ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS user_role TEXT;
+      ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'success';
+      ALTER TABLE audit_logs ALTER COLUMN record_id TYPE TEXT;
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT true;
     `).catch((err) => {
       console.warn('[PostgreSQL Migration Warning]', err.message);
     });

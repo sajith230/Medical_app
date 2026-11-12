@@ -720,12 +720,46 @@ export const api = {
 
   // Audit Logs
   auditLogs: {
-    async getAll(): Promise<{ data: AuditLog[] | null; error: Error | null }> {
-      const res = await request<AuditLog[]>('/audit-logs');
-      if (!res.error && res.data) return res;
+    async getAll(params?: {
+      user?: string;
+      role?: string;
+      module?: string;
+      action?: string;
+      status?: string;
+      startDate?: string;
+      endDate?: string;
+      page?: number;
+      limit?: number;
+      sort?: string;
+      search?: string;
+      q?: string;
+    }): Promise<{ data: AuditLog[] | null; total?: number; page?: number; limit?: number; totalPages?: number; error: Error | null }> {
+      const queryParams = new URLSearchParams();
+      if (params) {
+        Object.entries(params).forEach(([key, val]) => {
+          if (val !== undefined && val !== null && val !== '') {
+            queryParams.append(key, String(val));
+          }
+        });
+      }
+      const qs = queryParams.toString();
+      const res = await request<any>(`/audit-logs${qs ? `?${qs}` : ''}`);
+      if (!res.error && res.data) {
+        if (Array.isArray(res.data)) {
+          return { data: res.data, total: res.data.length, page: 1, limit: res.data.length, totalPages: 1, error: null };
+        }
+        return {
+          data: res.data.data || res.data,
+          total: res.data.total ?? (res.data.data ? res.data.data.length : 0),
+          page: res.data.page ?? 1,
+          limit: res.data.limit ?? 50,
+          totalPages: res.data.totalPages ?? 1,
+          error: null,
+        };
+      }
 
       const stored: AuditLog[] = JSON.parse(localStorage.getItem(MOCK_LOGS_KEY) || '[]');
-      if (stored.length > 0) return { data: stored, error: null };
+      if (stored.length > 0) return { data: stored, total: stored.length, page: 1, limit: stored.length, totalPages: 1, error: null };
 
       const sample: AuditLog[] = [
         {
@@ -738,6 +772,7 @@ export const api = {
           table_name: 'users',
           record_id: 'admin-uuid',
           details: { role: 'admin', ip: '127.0.0.1' },
+          status: 'success',
           created_at: new Date(Date.now() - 30 * 60000).toISOString(),
         },
         {
@@ -750,11 +785,12 @@ export const api = {
           table_name: 'consultations',
           record_id: 'demo-c1',
           details: { priority_score: 100, type: 'priority' },
+          status: 'success',
           created_at: new Date(Date.now() - 15 * 60000).toISOString(),
         },
       ];
       localStorage.setItem(MOCK_LOGS_KEY, JSON.stringify(sample));
-      return { data: sample, error: null };
+      return { data: sample, total: sample.length, page: 1, limit: sample.length, totalPages: 1, error: null };
     },
   },
 

@@ -121,6 +121,7 @@ export interface AuditLog {
   record_id: string | null;
   details: any;
   ip_address?: string | null;
+  status?: string | null;
   created_at: string;
 }
 

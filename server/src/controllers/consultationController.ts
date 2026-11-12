@@ -85,6 +85,7 @@ export async function updateConsultationType(req: Request, res: Response): Promi
           price_cents: updatedType?.price_cents,
           duration_minutes: updatedType?.duration_minutes,
         },
+        status: 'success',
       }).catch((err) => console.warn('[Audit Log Warning]', err.message));
 
       res.json({ data: updatedType });
@@ -129,7 +130,23 @@ export async function createConsultationType(req: Request, res: Response): Promi
         duration_minutes,
         score,
       ]);
-      res.status(201).json({ data: result.rows[0] });
+      const createdType = result.rows[0];
+
+      recordAuditLog({
+        req,
+        action: 'pricing.created',
+        table_name: 'consultation_types',
+        record_id: createdType.id,
+        details: {
+          name: createdType.name,
+          display_name: createdType.display_name,
+          price_cents: createdType.price_cents,
+          duration_minutes: createdType.duration_minutes,
+        },
+        status: 'success',
+      }).catch((err) => console.warn('[Audit Log Warning]', err.message));
+
+      res.status(201).json({ data: createdType });
       return;
     }
 
@@ -157,6 +174,16 @@ export async function deleteConsultationType(req: Request, res: Response): Promi
   try {
     if (isDbConnected()) {
       await query(`DELETE FROM consultation_types WHERE id::text = $1 OR name = $1`, [id]);
+
+      recordAuditLog({
+        req,
+        action: 'pricing.deleted',
+        table_name: 'consultation_types',
+        record_id: Array.isArray(id) ? id[0] : (id as string),
+        details: { identifier: id },
+        status: 'success',
+      }).catch((err) => console.warn('[Audit Log Warning]', err.message));
+
       res.json({ data: { success: true, id } });
       return;
     }
@@ -287,7 +314,23 @@ export async function createConsultation(req: Request, res: Response): Promise<v
           RETURNING id
         `;
         const result = await query(sql, [pId, tId, preId, score, sessionId]);
-        res.status(201).json({ data: { id: result.rows[0].id } });
+        const consultId = result.rows[0].id;
+
+        recordAuditLog({
+          req,
+          action: 'consultation.created',
+          table_name: 'consultations',
+          record_id: consultId,
+          details: {
+            patient_id: pId,
+            consultation_type_id: tId,
+            priority_score: score,
+            booking_session_id: sessionId,
+          },
+          status: 'success',
+        }).catch((err) => console.warn('[Audit Log Warning]', err.message));
+
+        res.status(201).json({ data: { id: consultId } });
         return;
       }
 
@@ -299,7 +342,22 @@ export async function createConsultation(req: Request, res: Response): Promise<v
         RETURNING id
       `;
       const result = await query(sql, [pId, tId, preId, score]);
-      res.status(201).json({ data: { id: result.rows[0].id } });
+      const consultId = result.rows[0].id;
+
+      recordAuditLog({
+        req,
+        action: 'consultation.created',
+        table_name: 'consultations',
+        record_id: consultId,
+        details: {
+          patient_id: pId,
+          consultation_type_id: tId,
+          priority_score: score,
+        },
+        status: 'success',
+      }).catch((err) => console.warn('[Audit Log Warning]', err.message));
+
+      res.status(201).json({ data: { id: consultId } });
       return;
     }
 
@@ -406,18 +464,35 @@ export async function updateConsultation(req: Request, res: Response): Promise<v
       const updatedConsultation = result.rows[0];
 
       // Record doctor/admin audit log for consultation changes
+      let actionName = 'consultation.updated';
+      if (updates.status === 'in_progress') {
+        actionName = 'queue.status_updated';
+      } else if (updates.status === 'completed') {
+        actionName = 'consultation.completed';
+      } else if (updates.status === 'cancelled') {
+        actionName = 'consultation.cancelled';
+      } else if (updates.status) {
+        actionName = `consultation.status_${updates.status}`;
+      } else if (updates.doctor_id) {
+        actionName = 'consultation.assigned';
+      } else if (updates.diagnosis !== undefined || updates.prescription !== undefined) {
+        actionName = 'consultation.diagnosis_updated';
+      }
+
       recordAuditLog({
         req,
-        action: typeof updates.status === 'string' ? `consultation.status_${updates.status}` : 'consultation.updated',
+        action: actionName,
         table_name: 'consultations',
         record_id: Array.isArray(id) ? id[0] : (id as string),
         details: {
           updated_fields: Object.keys(updates),
           new_status: updates.status,
+          doctor_id: updates.doctor_id,
           has_diagnosis: updates.diagnosis !== undefined,
           has_prescription: updates.prescription !== undefined,
           has_link: updates.consultation_link !== undefined,
         },
+        status: 'success',
       }).catch((err) => console.warn('[Audit Log Warning]', err.message));
 
       // Check if we should trigger an email to patient

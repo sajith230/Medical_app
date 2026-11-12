@@ -3,6 +3,7 @@ import crypto from 'crypto';
 import { pool, query, isDbConnected } from '../config/db.js';
 import type { AuthenticatedRequest } from '../middleware/authMiddleware.js';
 import { memoryConsultations } from './consultationController.js';
+import { recordAuditLog } from './auditController.js';
 
 // In-memory rate limiting map for payment attempts: IP -> { count, resetTime }
 const rateLimitMap = new Map<string, { count: number; resetTime: number }>();
@@ -92,6 +93,14 @@ export async function processPayment(req: Request, res: Response): Promise<void>
   if (card_number) {
     const cleanNum = String(card_number).replace(/\s+/g, '');
     if (!validateLuhn(cleanNum)) {
+      recordAuditLog({
+        action: 'payment.failed',
+        table_name: 'payments',
+        details: { consultation_id: cId, reason: 'Invalid card number checksum', code: 'INVALID_CARD_NUMBER' },
+        status: 'failed',
+        ip_address: ip,
+      }).catch((err) => console.warn('[Audit Log Warning]', err.message));
+
       res.status(400).json({ message: 'Invalid card number checksum', code: 'INVALID_CARD_NUMBER' });
       return;
     }
@@ -106,10 +115,26 @@ export async function processPayment(req: Request, res: Response): Promise<void>
       const currentMonth = new Date().getMonth() + 1;
 
       if (!month || month < 1 || month > 12) {
+        recordAuditLog({
+          action: 'payment.failed',
+          table_name: 'payments',
+          details: { consultation_id: cId, reason: 'Invalid card expiration month', code: 'INVALID_EXPIRY' },
+          status: 'failed',
+          ip_address: ip,
+        }).catch((err) => console.warn('[Audit Log Warning]', err.message));
+
         res.status(400).json({ message: 'Invalid card expiration month', code: 'INVALID_EXPIRY' });
         return;
       }
       if (!year || year < currentYear || (year === currentYear && month < currentMonth)) {
+        recordAuditLog({
+          action: 'payment.failed',
+          table_name: 'payments',
+          details: { consultation_id: cId, reason: 'Card has expired', code: 'CARD_EXPIRED' },
+          status: 'failed',
+          ip_address: ip,
+        }).catch((err) => console.warn('[Audit Log Warning]', err.message));
+
         res.status(400).json({ message: 'Card has expired', code: 'CARD_EXPIRED' });
         return;
       }
@@ -118,6 +143,14 @@ export async function processPayment(req: Request, res: Response): Promise<void>
     if (card_cvc) {
       const cvcClean = String(card_cvc).trim();
       if (!/^\d{3,4}$/.test(cvcClean)) {
+        recordAuditLog({
+          action: 'payment.failed',
+          table_name: 'payments',
+          details: { consultation_id: cId, reason: 'Invalid CVC security code', code: 'INVALID_CVC' },
+          status: 'failed',
+          ip_address: ip,
+        }).catch((err) => console.warn('[Audit Log Warning]', err.message));
+
         res.status(400).json({ message: 'Invalid CVC security code', code: 'INVALID_CVC' });
         return;
       }
@@ -227,8 +260,8 @@ export async function processPayment(req: Request, res: Response): Promise<void>
       const patientUserId = consult.patient_user_id || null;
 
       await client.query(
-        `INSERT INTO audit_logs (user_id, user_name, user_email, user_role, action, table_name, record_id, details, ip_address)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+        `INSERT INTO audit_logs (user_id, user_name, user_email, user_role, action, table_name, record_id, details, ip_address, status)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
         [
           patientUserId,
           patientName,
@@ -250,6 +283,7 @@ export async function processPayment(req: Request, res: Response): Promise<void>
             user_role: 'patient',
           }),
           ip,
+          'success',
         ]
       ).catch(() => {});
 
@@ -338,5 +372,129 @@ export async function getPayments(req: AuthenticatedRequest, res: Response): Pro
     res.json({ data: [] });
   } catch (err: any) {
     res.status(500).json({ message: 'Error fetching payments', error: err.message });
+  }
+}
+
+/**
+ * Refund a payment (Restricted to authenticated Admins)
+ */
+export async function refundPayment(req: AuthenticatedRequest, res: Response): Promise<void> {
+  const { id } = req.params;
+  const paymentId = id || req.body.payment_id;
+  const { reason, amount_cents } = req.body;
+
+  if (!paymentId) {
+    res.status(400).json({ message: 'Payment ID is required' });
+    return;
+  }
+
+  try {
+    if (isDbConnected()) {
+      const getRes = await query(
+        `SELECT pay.*, c.patient_id, p.full_name as patient_name, p.email as patient_email
+         FROM payments pay
+         JOIN consultations c ON c.id = pay.consultation_id
+         LEFT JOIN patients p ON p.id = c.patient_id
+         WHERE pay.id::text = $1 OR pay.stripe_payment_id = $1`,
+        [paymentId]
+      );
+
+      if (getRes.rows.length === 0) {
+        res.status(404).json({ message: 'Payment record not found' });
+        return;
+      }
+
+      const payment = getRes.rows[0];
+      const refundAmount = amount_cents || payment.amount_cents;
+
+      await query(
+        `UPDATE payments SET status = 'refunded', updated_at = NOW() WHERE id = $1`,
+        [payment.id]
+      );
+
+      await query(
+        `UPDATE consultations SET status = 'cancelled', updated_at = NOW() WHERE id = $1`,
+        [payment.consultation_id]
+      );
+
+      recordAuditLog({
+        req,
+        action: 'payment.refunded',
+        table_name: 'payments',
+        record_id: payment.id,
+        details: {
+          consultation_id: payment.consultation_id,
+          patient_name: payment.patient_name,
+          patient_email: payment.patient_email,
+          refunded_amount_cents: refundAmount,
+          reason: reason || 'Patient requested refund',
+        },
+        status: 'success',
+      }).catch((err) => console.warn('[Audit Log Warning]', err.message));
+
+      res.json({
+        success: true,
+        message: 'Payment refunded successfully',
+        data: {
+          id: payment.id,
+          status: 'refunded',
+          refunded_amount_cents: refundAmount,
+        },
+      });
+      return;
+    }
+
+    res.json({ success: true, message: 'Payment refunded (demo mode)', id: paymentId });
+  } catch (err: any) {
+    res.status(500).json({ message: 'Error refunding payment', error: err.message });
+  }
+}
+
+/**
+ * Verify a payment transaction
+ */
+export async function verifyPayment(req: Request, res: Response): Promise<void> {
+  const { id } = req.params;
+  const paymentId = id || (req.query.id as string) || req.body.payment_id;
+
+  try {
+    if (isDbConnected()) {
+      const result = await query(
+        `SELECT pay.*, c.patient_id, p.full_name as patient_name, p.email as patient_email
+         FROM payments pay
+         JOIN consultations c ON c.id = pay.consultation_id
+         LEFT JOIN patients p ON p.id = c.patient_id
+         WHERE pay.id::text = $1 OR pay.stripe_payment_id = $1`,
+        [paymentId]
+      );
+
+      if (result.rows.length === 0) {
+        res.status(404).json({ message: 'Payment record not found' });
+        return;
+      }
+
+      const payment = result.rows[0];
+
+      recordAuditLog({
+        req,
+        action: 'payment.verified',
+        table_name: 'payments',
+        record_id: payment.id,
+        details: {
+          consultation_id: payment.consultation_id,
+          amount_cents: payment.amount_cents,
+          status: payment.status,
+          stripe_payment_id: payment.stripe_payment_id,
+        },
+        status: 'success',
+      }).catch((err) => console.warn('[Audit Log Warning]', err.message));
+
+      res.json({ success: true, data: payment });
+      return;
+    }
+
+    res.json({ success: true, data: { id: paymentId, status: 'completed' } });
+  } catch (err: any) {
+    res.status(500).json({ message: 'Error verifying payment', error: err.message });
   }
 }

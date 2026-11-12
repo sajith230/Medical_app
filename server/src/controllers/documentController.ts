@@ -6,6 +6,7 @@ import jwt from 'jsonwebtoken';
 import { fileURLToPath } from 'url';
 import cloudinary, { initCloudinary, isCloudinaryConfigured } from '../config/cloudinary.js';
 import type { AuthenticatedRequest } from '../middleware/authMiddleware.js';
+import { recordAuditLog } from './auditController.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -115,6 +116,14 @@ export async function viewDocument(req: Request, res: Response): Promise<void> {
   // 1. Verify doctor / admin authentication
   const authUser = verifyDoctorAuth(req);
   if (!authUser) {
+    recordAuditLog({
+      action: 'document.access_denied',
+      table_name: 'medical_documents',
+      details: { url: req.query.url, reason: 'Unauthorized access attempt' },
+      status: 'failed',
+      ip_address: req.ip || req.socket.remoteAddress || null,
+    }).catch((err) => console.warn('[Audit Log Warning]', err.message));
+
     res.status(401).send(`
       <!DOCTYPE html>
       <html>
@@ -154,6 +163,25 @@ export async function viewDocument(req: Request, res: Response): Promise<void> {
   // Mode: inline (default) or download
   const isDownload = req.query.mode === 'download';
   const dispositionType = isDownload ? 'attachment' : 'inline';
+
+  // Audit log document viewing / download
+  recordAuditLog({
+    req,
+    actor: {
+      id: authUser.id,
+      email: authUser.email,
+      role: authUser.role,
+    },
+    action: isDownload ? 'document.downloaded' : 'document.previewed',
+    table_name: 'medical_documents',
+    record_id: fileName,
+    details: {
+      filename: fileName,
+      mode: isDownload ? 'download' : 'preview',
+      url: cleanUrl,
+    },
+    status: 'success',
+  }).catch((err) => console.warn('[Audit Log Warning]', err.message));
 
   // 2. Check if URL is Cloudinary
   const cldInfo = parseCloudinaryUrl(rawUrl);
@@ -328,5 +356,31 @@ export async function getDocumentAccess(req: AuthenticatedRequest, res: Response
       expiresIn: 3600,
     },
   });
+}
+
+export async function deleteDocument(req: Request, res: Response): Promise<void> {
+  const authUser = verifyDoctorAuth(req);
+  if (!authUser) {
+    res.status(401).json({ message: 'Authentication required: Doctor or Admin role' });
+    return;
+  }
+  const { id } = req.params;
+  const rawUrl = typeof req.query.url === 'string' ? req.query.url : id;
+
+  recordAuditLog({
+    req,
+    actor: {
+      id: authUser.id,
+      email: authUser.email,
+      role: authUser.role,
+    },
+    action: 'document.deleted',
+    table_name: 'medical_documents',
+    record_id: Array.isArray(id) ? id[0] : (id as string),
+    details: { identifier: id, url: rawUrl },
+    status: 'success',
+  }).catch((err) => console.warn('[Audit Log Warning]', err.message));
+
+  res.json({ success: true, message: 'Document deleted successfully', id });
 }
 

@@ -207,9 +207,10 @@ CREATE TABLE IF NOT EXISTS audit_logs (
   user_role TEXT,
   action TEXT NOT NULL,
   table_name TEXT,
-  record_id UUID,
+  record_id TEXT,
   details JSONB,
   ip_address TEXT,
+  status TEXT DEFAULT 'success',
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
