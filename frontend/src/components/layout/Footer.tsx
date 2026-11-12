@@ -30,9 +30,9 @@ export default function Footer() {
                 alt="ChatDr Logo"
                 className="h-11 sm:h-12 w-auto object-contain"
               />
-              <span className="font-display text-lg sm:text-xl font-bold tracking-tight text-white">
+              {/*<span className="font-display text-lg sm:text-xl font-bold tracking-tight text-white">
                 Medi Lanka / Embassy care
-              </span>
+              </span>*/}
             </Link>
             <p className="mt-3.5 text-xs sm:text-sm text-slate-300/90 leading-relaxed max-w-sm">
               Dedicated private telemedicine sanctuary for international diplomatic staff, foreign passport holders, and travelers visiting sri lanka.

@@ -4,6 +4,7 @@ import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { query, isDbConnected } from '../config/db.js';
 import { isCloudinaryConfigured, uploadBufferToCloudinary } from '../config/cloudinary.js';
+import { recordAuditLog } from './auditController.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -92,6 +93,21 @@ export async function uploadFile(req: Request, res: Response): Promise<void> {
 
       console.log(`[Cloudinary] Successfully uploaded: ${result.original_filename} -> ${result.secure_url}`);
 
+      recordAuditLog({
+        req,
+        action: 'document.uploaded',
+        table_name: 'medical_documents',
+        record_id: result.public_id || null,
+        details: {
+          filename: req.file.originalname,
+          size_bytes: result.bytes,
+          format: result.format,
+          provider: 'cloudinary',
+          url: result.secure_url,
+        },
+        status: 'success',
+      }).catch((err) => console.warn('[Audit Log Warning]', err.message));
+
       res.status(200).json({
         success: true,
         path: result.secure_url,
@@ -117,6 +133,20 @@ export async function uploadFile(req: Request, res: Response): Promise<void> {
     const localUrl = `/uploads/${localFilename}`;
     console.log(`[Local Upload] Cloudinary credentials not detected in .env. Saved locally: ${localUrl}`);
 
+    recordAuditLog({
+      req,
+      action: 'document.uploaded',
+      table_name: 'medical_documents',
+      record_id: localFilename,
+      details: {
+        filename: req.file.originalname,
+        size_bytes: req.file.size,
+        provider: 'local',
+        url: localUrl,
+      },
+      status: 'success',
+    }).catch((err) => console.warn('[Audit Log Warning]', err.message));
+
     res.status(200).json({
       success: true,
       path: localUrl,
@@ -128,6 +158,14 @@ export async function uploadFile(req: Request, res: Response): Promise<void> {
     });
   } catch (err: any) {
     console.error('[Upload Error]', err);
+    recordAuditLog({
+      req,
+      action: 'document.upload_failed',
+      table_name: 'medical_documents',
+      details: { filename: req.file?.originalname, error: err.message },
+      status: 'failed',
+    }).catch((logErr) => console.warn('[Audit Log Warning]', logErr.message));
+
     res.status(500).json({
       message: 'Failed to upload document',
       error: err.message || 'Unknown error occurred',

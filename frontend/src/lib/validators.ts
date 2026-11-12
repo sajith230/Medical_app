@@ -1,13 +1,31 @@
 import { z } from "zod";
 
+export const getTodayDateString = (): string => {
+  const today = new Date();
+  const year = today.getFullYear();
+  const month = String(today.getMonth() + 1).padStart(2, "0");
+  const day = String(today.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+};
+
 export const patientIntakeSchema = z.object({
   full_name: z.string().trim().min(2, "Name must be at least 2 characters").max(100),
   email: z.string().trim().email("Invalid email address").max(255),
   phone: z.string().trim().min(7, "Invalid phone number").max(20),
-  date_of_birth: z.string().min(1, "Date of birth is required"),
+  date_of_birth: z
+    .string()
+    .min(1, "Date of birth is required")
+    .refine((val) => !val || val <= getTodayDateString(), {
+      message: "Date of Birth cannot be a future date.",
+    }),
   nationality: z.string().trim().min(2, "Nationality is required").max(100),
   passport_number: z.string().trim().min(5, "Invalid passport number").max(20),
-  passport_expiry: z.string().optional(),
+  passport_expiry: z
+    .string()
+    .optional()
+    .refine((val) => !val || val.trim() === "" || val >= getTodayDateString(), {
+      message: "Passport Expiry Date cannot be in the past.",
+    }),
   hotel_address: z.string().trim().max(500).optional(),
   emergency_contact_name: z.string().trim().min(2, "Emergency contact name is required").max(100),
   emergency_contact_phone: z.string().trim().min(7, "Invalid phone number").max(20),

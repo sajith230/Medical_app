@@ -8,6 +8,8 @@ import type {
   TrackingData,
   User,
   Session,
+  DoctorReportsData,
+  FinancialReportsData,
 } from '@/types/database';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
@@ -248,6 +250,10 @@ export const api = {
         return { data: [res.data], error: null };
       }
 
+      if (res.error && !res.error.message.includes('fetch')) {
+        return { data: null, error: res.error };
+      }
+
       // Fallback local storage for smooth UI continuity
       const trackingCode = Math.random().toString(36).substring(2, 8).toUpperCase();
       const patient: Patient = {
@@ -402,6 +408,8 @@ export const api = {
       consultation_type_id: string;
       medical_precheck_id?: string | null;
       priority_score?: number;
+      consultation_id?: string;
+      booking_session_id?: string;
     }) {
       const res = await request<{ id: string }>('/consultations', {
         method: 'POST',
@@ -412,7 +420,10 @@ export const api = {
         return { data: res.data.id, error: null };
       }
 
-      const id = `cns_${Date.now()}`;
+      if (res.error && !res.error.message.includes('fetch')) {
+        return { data: null, error: res.error };
+      }
+
       const mockConsultations: Consultation[] = JSON.parse(localStorage.getItem(MOCK_CONSULTATIONS_KEY) || '[]');
       const patients: Patient[] = JSON.parse(localStorage.getItem(MOCK_PATIENTS_KEY) || '[]');
       const patient = patients.find((p) => p.id === data.patient_id);
@@ -421,6 +432,26 @@ export const api = {
       const mockPrechecks = JSON.parse(localStorage.getItem('medilanka_mock_prechecks') || '{}');
       const precheck = data.medical_precheck_id ? mockPrechecks[data.medical_precheck_id] : null;
 
+      // Check if consultation already exists for consultation_id, booking_session_id, or (patient_id + pending)
+      let existingIndex = mockConsultations.findIndex((c) =>
+        (data.consultation_id && c.id === data.consultation_id) ||
+        (data.booking_session_id && (c as any).booking_session_id === data.booking_session_id) ||
+        (c.patient_id === data.patient_id && c.status === 'pending')
+      );
+
+      if (existingIndex >= 0) {
+        const existing = mockConsultations[existingIndex];
+        existing.consultation_type_id = data.consultation_type_id;
+        existing.priority_score = data.priority_score || type?.priority_score || 0;
+        existing.consultation_types = type ? { display_name: type.display_name, name: type.name } : undefined;
+        if (data.medical_precheck_id) existing.medical_precheck_id = data.medical_precheck_id;
+        if (data.booking_session_id) (existing as any).booking_session_id = data.booking_session_id;
+        existing.updated_at = new Date().toISOString();
+        localStorage.setItem(MOCK_CONSULTATIONS_KEY, JSON.stringify(mockConsultations));
+        return { data: existing.id, error: null };
+      }
+
+      const id = data.consultation_id || `cns_${Date.now()}`;
       const newConsult: Consultation = {
         id,
         patient_id: data.patient_id,
@@ -428,6 +459,7 @@ export const api = {
         medical_precheck_id: data.medical_precheck_id || null,
         status: 'pending',
         priority_score: data.priority_score || type?.priority_score || 0,
+        booking_session_id: data.booking_session_id || null,
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
         patients: patient,
@@ -625,24 +657,34 @@ export const api = {
 
       // Mock payment fallback
       const storedPayments: Payment[] = JSON.parse(localStorage.getItem(MOCK_PAYMENTS_KEY) || '[]');
-      const newPayment: Payment = {
-        id: `pay_${Date.now()}`,
-        consultation_id: data.consultation_id,
-        stripe_payment_id: data.stripe_payment_id || `sim_${Date.now()}`,
-        amount_cents: data.amount_cents || 10000,
-        currency: data.currency || 'usd',
-        status: 'completed',
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      };
-      storedPayments.push(newPayment);
-      localStorage.setItem(MOCK_PAYMENTS_KEY, JSON.stringify(storedPayments));
+      const existingPayment = storedPayments.find((p) => p.consultation_id === data.consultation_id);
+      if (!existingPayment) {
+        const newPayment: Payment = {
+          id: `pay_${Date.now()}`,
+          consultation_id: data.consultation_id,
+          stripe_payment_id: data.stripe_payment_id || `sim_${Date.now()}`,
+          amount_cents: data.amount_cents || 10000,
+          currency: data.currency || 'usd',
+          status: 'completed',
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        };
+        storedPayments.push(newPayment);
+        localStorage.setItem(MOCK_PAYMENTS_KEY, JSON.stringify(storedPayments));
+      }
 
-      // Also update consultation status to 'paid' in mock
+      // Also update consultation status to 'paid' in mock, and cancel any duplicate pending ones for this patient
       const storedConsults: Consultation[] = JSON.parse(localStorage.getItem(MOCK_CONSULTATIONS_KEY) || '[]');
-      const updatedConsults = storedConsults.map((c) =>
-        c.id === data.consultation_id ? { ...c, status: 'paid' as const } : c
-      );
+      const targetConsult = storedConsults.find((c) => c.id === data.consultation_id);
+      const updatedConsults = storedConsults.map((c) => {
+        if (c.id === data.consultation_id) {
+          return { ...c, status: 'paid' as const, updated_at: new Date().toISOString() };
+        }
+        if (targetConsult && c.patient_id === targetConsult.patient_id && c.status === 'pending') {
+          return { ...c, status: 'cancelled' as const, updated_at: new Date().toISOString() };
+        }
+        return c;
+      });
       localStorage.setItem(MOCK_CONSULTATIONS_KEY, JSON.stringify(updatedConsults));
 
       return { error: null };
@@ -678,90 +720,114 @@ export const api = {
 
   // Audit Logs
   auditLogs: {
-    async getAll(): Promise<{ data: AuditLog[] | null; error: Error | null }> {
-      const res = await request<AuditLog[]>('/audit-logs');
-      if (!res.error && res.data) return res;
+    async getAll(params?: {
+      user?: string;
+      role?: string;
+      module?: string;
+      action?: string;
+      status?: string;
+      startDate?: string;
+      endDate?: string;
+      page?: number;
+      limit?: number;
+      sort?: string;
+      search?: string;
+      q?: string;
+    }): Promise<{ data: AuditLog[] | null; total?: number; page?: number; limit?: number; totalPages?: number; error: Error | null }> {
+      const queryParams = new URLSearchParams();
+      if (params) {
+        Object.entries(params).forEach(([key, val]) => {
+          if (val !== undefined && val !== null && val !== '') {
+            queryParams.append(key, String(val));
+          }
+        });
+      }
+      const qs = queryParams.toString();
+      const res = await request<any>(`/audit-logs${qs ? `?${qs}` : ''}`);
+      if (!res.error && res.data) {
+        if (Array.isArray(res.data)) {
+          return { data: res.data, total: res.data.length, page: 1, limit: res.data.length, totalPages: 1, error: null };
+        }
+        return {
+          data: res.data.data || res.data,
+          total: res.data.total ?? (res.data.data ? res.data.data.length : 0),
+          page: res.data.page ?? 1,
+          limit: res.data.limit ?? 50,
+          totalPages: res.data.totalPages ?? 1,
+          error: null,
+        };
+      }
 
       const stored: AuditLog[] = JSON.parse(localStorage.getItem(MOCK_LOGS_KEY) || '[]');
-      if (stored.length > 0) return { data: stored, error: null };
+      if (stored.length > 0) return { data: stored, total: stored.length, page: 1, limit: stored.length, totalPages: 1, error: null };
 
       const sample: AuditLog[] = [
         {
           id: 'log-1',
+          user_id: '00000000-0000-0000-0000-000000000001',
+          user_name: 'System Administrator',
+          user_email: 'admin@medilanka.com',
+          user_role: 'admin',
           action: 'LOGIN_SUCCESS',
           table_name: 'users',
           record_id: 'admin-uuid',
           details: { role: 'admin', ip: '127.0.0.1' },
+          status: 'success',
           created_at: new Date(Date.now() - 30 * 60000).toISOString(),
         },
         {
           id: 'log-2',
+          user_id: null,
+          user_name: 'Savindi Panditha',
+          user_email: 'savindi.dasunika@gmail.com',
+          user_role: 'patient',
           action: 'CONSULTATION_CREATED',
           table_name: 'consultations',
           record_id: 'demo-c1',
           details: { priority_score: 100, type: 'priority' },
+          status: 'success',
           created_at: new Date(Date.now() - 15 * 60000).toISOString(),
         },
       ];
       localStorage.setItem(MOCK_LOGS_KEY, JSON.stringify(sample));
-      return { data: sample, error: null };
+      return { data: sample, total: sample.length, page: 1, limit: sample.length, totalPages: 1, error: null };
     },
   },
 
   // Reports
   reports: {
-    async getDoctorStats() {
-      const res = await request<{ total: number; completed: number; revenue: number; avgWait: number }>('/reports/doctor');
-      if (!res.error && res.data) return res;
-
-      // Calculate from local data
-      const consults: Consultation[] = JSON.parse(localStorage.getItem(MOCK_CONSULTATIONS_KEY) || '[]');
-      const payments: Payment[] = JSON.parse(localStorage.getItem(MOCK_PAYMENTS_KEY) || '[]');
-
-      const total = consults.length;
-      const completed = consults.filter((c) => c.status === 'completed').length;
-      const revenue = payments.filter((p) => p.status === 'completed').reduce((sum, p) => sum + p.amount_cents, 0);
-
-      const waits = consults
-        .filter((c) => c.started_at && c.created_at)
-        .map((c) => (new Date(c.started_at!).getTime() - new Date(c.created_at).getTime()) / 60000);
-      const avgWait = waits.length ? Math.round(waits.reduce((a, b) => a + b, 0) / waits.length) : 12;
-
-      return {
-        data: { total: total || 1, completed, revenue: revenue || 15000, avgWait },
-        error: null,
-      };
+    async getDoctorStats(range: string = 'all') {
+      const res = await request<DoctorReportsData>(`/reports/doctor?range=${encodeURIComponent(range)}`);
+      return res;
     },
 
-    async getAdminStats() {
-      const res = await request<{
-        total: number;
-        completed: number;
-        revenue: number;
-        cancelled: number;
-        consultations: Consultation[];
-      }>('/reports/admin');
+    async getAdminStats(params?: { range?: string; status?: string; type?: string }) {
+      const query = new URLSearchParams();
+      if (params?.range) query.set('range', params.range);
+      if (params?.status) query.set('status', params.status);
+      if (params?.type) query.set('type', params.type);
+      const queryString = query.toString() ? `?${query.toString()}` : '';
+      const res = await request<FinancialReportsData>(`/reports/admin${queryString}`);
+      return res;
+    },
+  },
 
-      if (!res.error && res.data) return res;
-
-      const consults: Consultation[] = JSON.parse(localStorage.getItem(MOCK_CONSULTATIONS_KEY) || '[]');
-      const payments: Payment[] = JSON.parse(localStorage.getItem(MOCK_PAYMENTS_KEY) || '[]');
-
-      const total = consults.length || 1;
-      const completed = consults.filter((c) => c.status === 'completed').length;
-      const cancelled = consults.filter((c) => c.status === 'cancelled').length;
-      const revenue = payments.filter((p) => p.status === 'completed').reduce((sum, p) => sum + p.amount_cents, 0) || 15000;
-
-      return {
-        data: {
-          total,
-          completed,
-          cancelled,
-          revenue,
-          consultations: consults,
-        },
-        error: null,
-      };
+  // Secure Medical Documents
+  documents: {
+    getViewUrl(rawUrl: string): string {
+      const session = getStoredSession();
+      const token = session?.token || '';
+      return `${API_URL}/documents/view?url=${encodeURIComponent(rawUrl)}&token=${encodeURIComponent(token)}`;
+    },
+    async getAccess(rawUrl: string) {
+      return request<{
+        fileName: string;
+        isPdf: boolean;
+        isImage: boolean;
+        viewUrl: string;
+        thumbnailUrl: string;
+        expiresIn: number;
+      }>(`/documents/access?url=${encodeURIComponent(rawUrl)}`);
     },
   },
 };

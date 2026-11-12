@@ -173,6 +173,8 @@ export default function Payment() {
     sessionStorage.removeItem("patient_id");
     sessionStorage.removeItem("precheck_id");
     sessionStorage.removeItem("consultation_id");
+    sessionStorage.removeItem("booking_session_id");
+    sessionStorage.removeItem("selected_type_id");
     sessionStorage.removeItem("selected_type_price");
     sessionStorage.removeItem("selected_type_name");
 

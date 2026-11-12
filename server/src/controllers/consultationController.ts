@@ -1,6 +1,7 @@
 import type { Request, Response } from 'express';
 import { query, isDbConnected } from '../config/db.js';
 import { sendConsultationSummaryEmail, sendConsultationLinkEmail } from '../services/emailService.js';
+import { recordAuditLog } from './auditController.js';
 
 export async function getConsultationTypes(req: Request, res: Response): Promise<void> {
   try {
@@ -71,7 +72,23 @@ export async function updateConsultationType(req: Request, res: Response): Promi
         RETURNING *
       `;
       const result = await query(sql, [display_name, description, price_cents, duration_minutes, priority_score, is_active, id]);
-      res.json({ data: result.rows[0] });
+      const updatedType = result.rows[0];
+
+      recordAuditLog({
+        req,
+        action: 'pricing.updated',
+        table_name: 'consultation_types',
+        record_id: updatedType?.id || (Array.isArray(id) ? id[0] : (id as string)),
+        details: {
+          name: updatedType?.name,
+          display_name: updatedType?.display_name,
+          price_cents: updatedType?.price_cents,
+          duration_minutes: updatedType?.duration_minutes,
+        },
+        status: 'success',
+      }).catch((err) => console.warn('[Audit Log Warning]', err.message));
+
+      res.json({ data: updatedType });
       return;
     }
 
@@ -113,7 +130,23 @@ export async function createConsultationType(req: Request, res: Response): Promi
         duration_minutes,
         score,
       ]);
-      res.status(201).json({ data: result.rows[0] });
+      const createdType = result.rows[0];
+
+      recordAuditLog({
+        req,
+        action: 'pricing.created',
+        table_name: 'consultation_types',
+        record_id: createdType.id,
+        details: {
+          name: createdType.name,
+          display_name: createdType.display_name,
+          price_cents: createdType.price_cents,
+          duration_minutes: createdType.duration_minutes,
+        },
+        status: 'success',
+      }).catch((err) => console.warn('[Audit Log Warning]', err.message));
+
+      res.status(201).json({ data: createdType });
       return;
     }
 
@@ -141,6 +174,16 @@ export async function deleteConsultationType(req: Request, res: Response): Promi
   try {
     if (isDbConnected()) {
       await query(`DELETE FROM consultation_types WHERE id::text = $1 OR name = $1`, [id]);
+
+      recordAuditLog({
+        req,
+        action: 'pricing.deleted',
+        table_name: 'consultation_types',
+        record_id: Array.isArray(id) ? id[0] : (id as string),
+        details: { identifier: id },
+        status: 'success',
+      }).catch((err) => console.warn('[Audit Log Warning]', err.message));
+
       res.json({ data: { success: true, id } });
       return;
     }
@@ -151,14 +194,33 @@ export async function deleteConsultationType(req: Request, res: Response): Promi
   }
 }
 
+interface InMemoryConsultation {
+  id: string;
+  patient_id: string;
+  consultation_type_id: string;
+  medical_precheck_id: string | null;
+  priority_score: number;
+  status: string;
+  booking_session_id?: string | null;
+  created_at: string;
+  updated_at: string;
+  [key: string]: any;
+}
+
+export const memoryConsultations: InMemoryConsultation[] = [];
+
 export async function createConsultation(req: Request, res: Response): Promise<void> {
   const {
+    _consultation_id, consultation_id,
+    _booking_session_id, booking_session_id,
     _patient_id, patient_id,
     _consultation_type_id, consultation_type_id,
     _medical_precheck_id, medical_precheck_id,
     _priority_score, priority_score,
   } = req.body;
 
+  const cId = _consultation_id || consultation_id || null;
+  const sessionId = _booking_session_id || booking_session_id || null;
   const pId = _patient_id || patient_id;
   const tId = _consultation_type_id || consultation_type_id;
   const preId = _medical_precheck_id || medical_precheck_id || null;
@@ -166,6 +228,113 @@ export async function createConsultation(req: Request, res: Response): Promise<v
 
   try {
     if (isDbConnected()) {
+      // 1. If explicit consultation_id provided, verify & reuse/update
+      if (cId) {
+        const existingById = await query(
+          `SELECT id, status, patient_id FROM consultations WHERE id = $1`,
+          [cId]
+        );
+        if (existingById.rows.length > 0) {
+          const row = existingById.rows[0];
+          if (row.status === 'pending') {
+            await query(
+              `UPDATE consultations
+               SET consultation_type_id = $1,
+                   priority_score = $2,
+                   medical_precheck_id = COALESCE($3, medical_precheck_id),
+                   booking_session_id = COALESCE($4, booking_session_id),
+                   updated_at = NOW()
+               WHERE id = $5`,
+              [tId, score, preId, sessionId, cId]
+            );
+          }
+          res.status(200).json({ data: { id: row.id } });
+          return;
+        }
+      }
+
+      // 2. If booking_session_id provided, check if consultation already exists for this booking session
+      if (sessionId) {
+        const existingBySession = await query(
+          `SELECT id, status FROM consultations WHERE booking_session_id = $1`,
+          [sessionId]
+        );
+        if (existingBySession.rows.length > 0) {
+          const row = existingBySession.rows[0];
+          if (row.status === 'pending') {
+            await query(
+              `UPDATE consultations
+               SET consultation_type_id = $1,
+                   priority_score = $2,
+                   medical_precheck_id = COALESCE($3, medical_precheck_id),
+                   updated_at = NOW()
+               WHERE id = $4`,
+              [tId, score, preId, row.id]
+            );
+          }
+          res.status(200).json({ data: { id: row.id } });
+          return;
+        }
+      }
+
+      // 3. If patient_id already has a pending consultation from current booking session, reuse it
+      if (pId) {
+        const existingPending = await query(
+          `SELECT id, status FROM consultations WHERE patient_id = $1 AND status = 'pending' ORDER BY created_at DESC LIMIT 1`,
+          [pId]
+        );
+        if (existingPending.rows.length > 0) {
+          const row = existingPending.rows[0];
+          await query(
+            `UPDATE consultations
+             SET consultation_type_id = $1,
+                 priority_score = $2,
+                 medical_precheck_id = COALESCE($3, medical_precheck_id),
+                 booking_session_id = COALESCE($4, booking_session_id),
+                 updated_at = NOW()
+             WHERE id = $5`,
+            [tId, score, preId, sessionId, row.id]
+          );
+          res.status(200).json({ data: { id: row.id } });
+          return;
+        }
+      }
+
+      // 4. Atomic insert with ON CONFLICT if booking_session_id is provided
+      if (sessionId) {
+        const sql = `
+          INSERT INTO consultations (
+            patient_id, consultation_type_id, medical_precheck_id, priority_score, status, booking_session_id
+          ) VALUES ($1, $2, $3, $4, 'pending', $5)
+          ON CONFLICT (booking_session_id) DO UPDATE
+          SET consultation_type_id = EXCLUDED.consultation_type_id,
+              priority_score = EXCLUDED.priority_score,
+              medical_precheck_id = COALESCE(EXCLUDED.medical_precheck_id, consultations.medical_precheck_id),
+              updated_at = NOW()
+          RETURNING id
+        `;
+        const result = await query(sql, [pId, tId, preId, score, sessionId]);
+        const consultId = result.rows[0].id;
+
+        recordAuditLog({
+          req,
+          action: 'consultation.created',
+          table_name: 'consultations',
+          record_id: consultId,
+          details: {
+            patient_id: pId,
+            consultation_type_id: tId,
+            priority_score: score,
+            booking_session_id: sessionId,
+          },
+          status: 'success',
+        }).catch((err) => console.warn('[Audit Log Warning]', err.message));
+
+        res.status(201).json({ data: { id: consultId } });
+        return;
+      }
+
+      // Normal insert if no session ID provided
       const sql = `
         INSERT INTO consultations (
           patient_id, consultation_type_id, medical_precheck_id, priority_score, status
@@ -173,11 +342,57 @@ export async function createConsultation(req: Request, res: Response): Promise<v
         RETURNING id
       `;
       const result = await query(sql, [pId, tId, preId, score]);
-      res.status(201).json({ data: { id: result.rows[0].id } });
+      const consultId = result.rows[0].id;
+
+      recordAuditLog({
+        req,
+        action: 'consultation.created',
+        table_name: 'consultations',
+        record_id: consultId,
+        details: {
+          patient_id: pId,
+          consultation_type_id: tId,
+          priority_score: score,
+        },
+        status: 'success',
+      }).catch((err) => console.warn('[Audit Log Warning]', err.message));
+
+      res.status(201).json({ data: { id: consultId } });
       return;
     }
 
-    const id = `cns_${Date.now()}`;
+    // In-memory fallback
+    let existing = memoryConsultations.find(c => 
+      (cId && c.id === cId) ||
+      (sessionId && c.booking_session_id === sessionId) ||
+      (pId && c.patient_id === pId && c.status === 'pending')
+    );
+
+    if (existing) {
+      if (existing.status === 'pending') {
+        existing.consultation_type_id = tId;
+        existing.priority_score = score;
+        if (preId) existing.medical_precheck_id = preId;
+        if (sessionId) existing.booking_session_id = sessionId;
+        existing.updated_at = new Date().toISOString();
+      }
+      res.status(200).json({ data: { id: existing.id } });
+      return;
+    }
+
+    const id = cId || `cns_${Date.now()}`;
+    const newConsult: InMemoryConsultation = {
+      id,
+      patient_id: pId,
+      consultation_type_id: tId,
+      medical_precheck_id: preId,
+      priority_score: score,
+      status: 'pending',
+      booking_session_id: sessionId,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+    memoryConsultations.push(newConsult);
     res.status(201).json({ data: { id } });
   } catch (err: any) {
     res.status(500).json({ message: 'Error creating consultation', error: err.message });
@@ -247,6 +462,38 @@ export async function updateConsultation(req: Request, res: Response): Promise<v
       const sql = `UPDATE consultations SET ${setClauses.join(', ')} WHERE id = $${idx} RETURNING *`;
       const result = await query(sql, values);
       const updatedConsultation = result.rows[0];
+
+      // Record doctor/admin audit log for consultation changes
+      let actionName = 'consultation.updated';
+      if (updates.status === 'in_progress') {
+        actionName = 'queue.status_updated';
+      } else if (updates.status === 'completed') {
+        actionName = 'consultation.completed';
+      } else if (updates.status === 'cancelled') {
+        actionName = 'consultation.cancelled';
+      } else if (updates.status) {
+        actionName = `consultation.status_${updates.status}`;
+      } else if (updates.doctor_id) {
+        actionName = 'consultation.assigned';
+      } else if (updates.diagnosis !== undefined || updates.prescription !== undefined) {
+        actionName = 'consultation.diagnosis_updated';
+      }
+
+      recordAuditLog({
+        req,
+        action: actionName,
+        table_name: 'consultations',
+        record_id: Array.isArray(id) ? id[0] : (id as string),
+        details: {
+          updated_fields: Object.keys(updates),
+          new_status: updates.status,
+          doctor_id: updates.doctor_id,
+          has_diagnosis: updates.diagnosis !== undefined,
+          has_prescription: updates.prescription !== undefined,
+          has_link: updates.consultation_link !== undefined,
+        },
+        status: 'success',
+      }).catch((err) => console.warn('[Audit Log Warning]', err.message));
 
       // Check if we should trigger an email to patient
       let emailResult = null;

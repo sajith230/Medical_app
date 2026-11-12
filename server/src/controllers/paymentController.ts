@@ -2,6 +2,8 @@ import type { Request, Response } from 'express';
 import crypto from 'crypto';
 import { pool, query, isDbConnected } from '../config/db.js';
 import type { AuthenticatedRequest } from '../middleware/authMiddleware.js';
+import { memoryConsultations } from './consultationController.js';
+import { recordAuditLog } from './auditController.js';
 
 // In-memory rate limiting map for payment attempts: IP -> { count, resetTime }
 const rateLimitMap = new Map<string, { count: number; resetTime: number }>();
@@ -91,6 +93,14 @@ export async function processPayment(req: Request, res: Response): Promise<void>
   if (card_number) {
     const cleanNum = String(card_number).replace(/\s+/g, '');
     if (!validateLuhn(cleanNum)) {
+      recordAuditLog({
+        action: 'payment.failed',
+        table_name: 'payments',
+        details: { consultation_id: cId, reason: 'Invalid card number checksum', code: 'INVALID_CARD_NUMBER' },
+        status: 'failed',
+        ip_address: ip,
+      }).catch((err) => console.warn('[Audit Log Warning]', err.message));
+
       res.status(400).json({ message: 'Invalid card number checksum', code: 'INVALID_CARD_NUMBER' });
       return;
     }
@@ -105,10 +115,26 @@ export async function processPayment(req: Request, res: Response): Promise<void>
       const currentMonth = new Date().getMonth() + 1;
 
       if (!month || month < 1 || month > 12) {
+        recordAuditLog({
+          action: 'payment.failed',
+          table_name: 'payments',
+          details: { consultation_id: cId, reason: 'Invalid card expiration month', code: 'INVALID_EXPIRY' },
+          status: 'failed',
+          ip_address: ip,
+        }).catch((err) => console.warn('[Audit Log Warning]', err.message));
+
         res.status(400).json({ message: 'Invalid card expiration month', code: 'INVALID_EXPIRY' });
         return;
       }
       if (!year || year < currentYear || (year === currentYear && month < currentMonth)) {
+        recordAuditLog({
+          action: 'payment.failed',
+          table_name: 'payments',
+          details: { consultation_id: cId, reason: 'Card has expired', code: 'CARD_EXPIRED' },
+          status: 'failed',
+          ip_address: ip,
+        }).catch((err) => console.warn('[Audit Log Warning]', err.message));
+
         res.status(400).json({ message: 'Card has expired', code: 'CARD_EXPIRED' });
         return;
       }
@@ -117,6 +143,14 @@ export async function processPayment(req: Request, res: Response): Promise<void>
     if (card_cvc) {
       const cvcClean = String(card_cvc).trim();
       if (!/^\d{3,4}$/.test(cvcClean)) {
+        recordAuditLog({
+          action: 'payment.failed',
+          table_name: 'payments',
+          details: { consultation_id: cId, reason: 'Invalid CVC security code', code: 'INVALID_CVC' },
+          status: 'failed',
+          ip_address: ip,
+        }).catch((err) => console.warn('[Audit Log Warning]', err.message));
+
         res.status(400).json({ message: 'Invalid CVC security code', code: 'INVALID_CVC' });
         return;
       }
@@ -131,10 +165,12 @@ export async function processPayment(req: Request, res: Response): Promise<void>
 
       // Lock consultation record for update to prevent concurrent duplicate payments
       const consultRes = await client.query(
-        `SELECT c.id, c.status, c.patient_id, ct.price_cents, ct.display_name
+        `SELECT c.id, c.status, c.patient_id, ct.price_cents, ct.display_name,
+                p.full_name as patient_name, p.email as patient_email, p.user_id as patient_user_id
          FROM consultations c
          JOIN consultation_types ct ON ct.id = c.consultation_type_id
-         WHERE c.id = $1 FOR UPDATE`,
+         LEFT JOIN patients p ON p.id = c.patient_id
+         WHERE c.id = $1 FOR UPDATE OF c`,
         [cId]
       );
 
@@ -147,11 +183,33 @@ export async function processPayment(req: Request, res: Response): Promise<void>
 
       const consult = consultRes.rows[0];
 
-      // Anti-Double-Payment Guard
+      // Anti-Double-Payment Guard: Handle duplicate payment callbacks / retries gracefully
       if (consult.status === 'paid' || consult.status === 'completed') {
-        await client.query('ROLLBACK');
+        const existingPaymentRes = await client.query(
+          `SELECT id, amount_cents, currency, status, stripe_payment_id, card_brand, card_last4
+           FROM payments
+           WHERE consultation_id = $1
+           ORDER BY created_at DESC LIMIT 1`,
+          [cId]
+        );
+        await client.query('COMMIT');
         client.release();
-        res.status(409).json({ message: 'This consultation is already paid for.', code: 'ALREADY_PAID' });
+
+        const existingPayment = existingPaymentRes.rows[0];
+        res.json({
+          success: true,
+          message: 'Payment already verified for this consultation',
+          data: {
+            payment_id: existingPayment?.id || null,
+            transaction_ref: existingPayment?.stripe_payment_id || null,
+            amount_cents: existingPayment?.amount_cents || consult.price_cents,
+            currency: existingPayment?.currency || 'usd',
+            status: 'completed',
+            card_brand: existingPayment?.card_brand || cardBrand,
+            card_last4: existingPayment?.card_last4 || cardLast4,
+            already_paid: true,
+          },
+        });
         return;
       }
 
@@ -186,11 +244,29 @@ export async function processPayment(req: Request, res: Response): Promise<void>
         [cId]
       );
 
-      // Create immutable audit log entry
+      // Cancel any older orphaned pending consultations for this patient to ensure only ONE record exists in the queue
+      if (consult.patient_id) {
+        await client.query(
+          `UPDATE consultations
+           SET status = 'cancelled', updated_at = NOW()
+           WHERE patient_id = $1 AND id != $2 AND status = 'pending'`,
+          [consult.patient_id, cId]
+        ).catch(() => {});
+      }
+
+      // Create immutable audit log entry with patient actor info
+      const patientName = consult.patient_name || cardholder_name || 'Patient';
+      const patientEmail = consult.patient_email || '';
+      const patientUserId = consult.patient_user_id || null;
+
       await client.query(
-        `INSERT INTO audit_logs (action, table_name, record_id, details, ip_address)
-         VALUES ($1, $2, $3, $4, $5)`,
+        `INSERT INTO audit_logs (user_id, user_name, user_email, user_role, action, table_name, record_id, details, ip_address, status)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
         [
+          patientUserId,
+          patientName,
+          patientEmail,
+          'patient',
           'payment.processed',
           'payments',
           paymentRecord.id,
@@ -202,8 +278,12 @@ export async function processPayment(req: Request, res: Response): Promise<void>
             card_last4: cardLast4,
             payment_ref: paymentRef,
             cardholder_name: cardholder_name || 'Cardholder',
+            user_name: patientName,
+            user_email: patientEmail,
+            user_role: 'patient',
           }),
           ip,
+          'success',
         ]
       ).catch(() => {});
 
@@ -232,6 +312,18 @@ export async function processPayment(req: Request, res: Response): Promise<void>
   }
 
   // Fallback demo simulator if DB is unreachable
+  const consult = memoryConsultations.find(c => c.id === cId);
+  if (consult) {
+    consult.status = 'paid';
+    consult.updated_at = new Date().toISOString();
+    memoryConsultations.forEach(c => {
+      if (c.patient_id === consult.patient_id && c.id !== cId && c.status === 'pending') {
+        c.status = 'cancelled';
+        c.updated_at = new Date().toISOString();
+      }
+    });
+  }
+
   res.json({
     success: true,
     data: {
@@ -280,5 +372,129 @@ export async function getPayments(req: AuthenticatedRequest, res: Response): Pro
     res.json({ data: [] });
   } catch (err: any) {
     res.status(500).json({ message: 'Error fetching payments', error: err.message });
+  }
+}
+
+/**
+ * Refund a payment (Restricted to authenticated Admins)
+ */
+export async function refundPayment(req: AuthenticatedRequest, res: Response): Promise<void> {
+  const { id } = req.params;
+  const paymentId = id || req.body.payment_id;
+  const { reason, amount_cents } = req.body;
+
+  if (!paymentId) {
+    res.status(400).json({ message: 'Payment ID is required' });
+    return;
+  }
+
+  try {
+    if (isDbConnected()) {
+      const getRes = await query(
+        `SELECT pay.*, c.patient_id, p.full_name as patient_name, p.email as patient_email
+         FROM payments pay
+         JOIN consultations c ON c.id = pay.consultation_id
+         LEFT JOIN patients p ON p.id = c.patient_id
+         WHERE pay.id::text = $1 OR pay.stripe_payment_id = $1`,
+        [paymentId]
+      );
+
+      if (getRes.rows.length === 0) {
+        res.status(404).json({ message: 'Payment record not found' });
+        return;
+      }
+
+      const payment = getRes.rows[0];
+      const refundAmount = amount_cents || payment.amount_cents;
+
+      await query(
+        `UPDATE payments SET status = 'refunded', updated_at = NOW() WHERE id = $1`,
+        [payment.id]
+      );
+
+      await query(
+        `UPDATE consultations SET status = 'cancelled', updated_at = NOW() WHERE id = $1`,
+        [payment.consultation_id]
+      );
+
+      recordAuditLog({
+        req,
+        action: 'payment.refunded',
+        table_name: 'payments',
+        record_id: payment.id,
+        details: {
+          consultation_id: payment.consultation_id,
+          patient_name: payment.patient_name,
+          patient_email: payment.patient_email,
+          refunded_amount_cents: refundAmount,
+          reason: reason || 'Patient requested refund',
+        },
+        status: 'success',
+      }).catch((err) => console.warn('[Audit Log Warning]', err.message));
+
+      res.json({
+        success: true,
+        message: 'Payment refunded successfully',
+        data: {
+          id: payment.id,
+          status: 'refunded',
+          refunded_amount_cents: refundAmount,
+        },
+      });
+      return;
+    }
+
+    res.json({ success: true, message: 'Payment refunded (demo mode)', id: paymentId });
+  } catch (err: any) {
+    res.status(500).json({ message: 'Error refunding payment', error: err.message });
+  }
+}
+
+/**
+ * Verify a payment transaction
+ */
+export async function verifyPayment(req: Request, res: Response): Promise<void> {
+  const { id } = req.params;
+  const paymentId = id || (req.query.id as string) || req.body.payment_id;
+
+  try {
+    if (isDbConnected()) {
+      const result = await query(
+        `SELECT pay.*, c.patient_id, p.full_name as patient_name, p.email as patient_email
+         FROM payments pay
+         JOIN consultations c ON c.id = pay.consultation_id
+         LEFT JOIN patients p ON p.id = c.patient_id
+         WHERE pay.id::text = $1 OR pay.stripe_payment_id = $1`,
+        [paymentId]
+      );
+
+      if (result.rows.length === 0) {
+        res.status(404).json({ message: 'Payment record not found' });
+        return;
+      }
+
+      const payment = result.rows[0];
+
+      recordAuditLog({
+        req,
+        action: 'payment.verified',
+        table_name: 'payments',
+        record_id: payment.id,
+        details: {
+          consultation_id: payment.consultation_id,
+          amount_cents: payment.amount_cents,
+          status: payment.status,
+          stripe_payment_id: payment.stripe_payment_id,
+        },
+        status: 'success',
+      }).catch((err) => console.warn('[Audit Log Warning]', err.message));
+
+      res.json({ success: true, data: payment });
+      return;
+    }
+
+    res.json({ success: true, data: { id: paymentId, status: 'completed' } });
+  } catch (err: any) {
+    res.status(500).json({ message: 'Error verifying payment', error: err.message });
   }
 }

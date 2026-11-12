@@ -6,6 +6,7 @@ import consultationRoutes from './consultationRoutes.js';
 import paymentRoutes from './paymentRoutes.js';
 import reportRoutes from './reportRoutes.js';
 import auditRoutes from './auditRoutes.js';
+import documentRoutes from './documentRoutes.js';
 import {
   getConsultationTypes,
   updateConsultationType,
@@ -37,5 +38,6 @@ router.use('/consultations', consultationRoutes);
 router.use('/payments', paymentRoutes);
 router.use('/reports', reportRoutes);
 router.use('/audit-logs', auditRoutes);
+router.use('/documents', documentRoutes);
 
 export default router;
