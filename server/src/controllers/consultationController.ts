@@ -76,7 +76,7 @@ export async function updateConsultationType(req: Request, res: Response): Promi
 
       recordAuditLog({
         req,
-        action: 'consultation_type.updated',
+        action: 'pricing.updated',
         table_name: 'consultation_types',
         record_id: updatedType?.id || (Array.isArray(id) ? id[0] : (id as string)),
         details: {

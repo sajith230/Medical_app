@@ -170,7 +170,7 @@ export async function processPayment(req: Request, res: Response): Promise<void>
          FROM consultations c
          JOIN consultation_types ct ON ct.id = c.consultation_type_id
          LEFT JOIN patients p ON p.id = c.patient_id
-         WHERE c.id = $1 FOR UPDATE`,
+         WHERE c.id = $1 FOR UPDATE OF c`,
         [cId]
       );
 
