@@ -3,6 +3,7 @@ import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { query, isDbConnected } from '../config/db.js';
 import type { AuthenticatedRequest } from '../middleware/authMiddleware.js';
+import { recordAuditLog } from './auditController.js';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'medilanka_secret_jwt_key_2026';
 
@@ -43,10 +44,24 @@ export async function login(req: Request, res: Response): Promise<void> {
           }
 
           const token = jwt.sign(
-            { id: user.id, email: user.email, role },
+            { id: user.id, email: user.email, role, full_name: user.full_name },
             JWT_SECRET,
             { expiresIn: '7d' }
           );
+
+          recordAuditLog({
+            actor: {
+              id: user.id,
+              name: user.full_name,
+              email: user.email,
+              role,
+            },
+            action: 'auth.login',
+            table_name: 'users',
+            record_id: user.id,
+            details: { email: user.email, role, asAdmin: !!asAdmin },
+            ip_address: req.ip || req.socket.remoteAddress || null,
+          }).catch((err) => console.warn('[Audit Log Warning]', err.message));
 
           res.json({
             data: {

@@ -1,6 +1,7 @@
 import type { Request, Response } from 'express';
 import { query, isDbConnected } from '../config/db.js';
 import { sendConsultationSummaryEmail, sendConsultationLinkEmail } from '../services/emailService.js';
+import { recordAuditLog } from './auditController.js';
 
 export async function getConsultationTypes(req: Request, res: Response): Promise<void> {
   try {
@@ -71,7 +72,22 @@ export async function updateConsultationType(req: Request, res: Response): Promi
         RETURNING *
       `;
       const result = await query(sql, [display_name, description, price_cents, duration_minutes, priority_score, is_active, id]);
-      res.json({ data: result.rows[0] });
+      const updatedType = result.rows[0];
+
+      recordAuditLog({
+        req,
+        action: 'consultation_type.updated',
+        table_name: 'consultation_types',
+        record_id: updatedType?.id || (Array.isArray(id) ? id[0] : (id as string)),
+        details: {
+          name: updatedType?.name,
+          display_name: updatedType?.display_name,
+          price_cents: updatedType?.price_cents,
+          duration_minutes: updatedType?.duration_minutes,
+        },
+      }).catch((err) => console.warn('[Audit Log Warning]', err.message));
+
+      res.json({ data: updatedType });
       return;
     }
 
@@ -388,6 +404,21 @@ export async function updateConsultation(req: Request, res: Response): Promise<v
       const sql = `UPDATE consultations SET ${setClauses.join(', ')} WHERE id = $${idx} RETURNING *`;
       const result = await query(sql, values);
       const updatedConsultation = result.rows[0];
+
+      // Record doctor/admin audit log for consultation changes
+      recordAuditLog({
+        req,
+        action: typeof updates.status === 'string' ? `consultation.status_${updates.status}` : 'consultation.updated',
+        table_name: 'consultations',
+        record_id: Array.isArray(id) ? id[0] : (id as string),
+        details: {
+          updated_fields: Object.keys(updates),
+          new_status: updates.status,
+          has_diagnosis: updates.diagnosis !== undefined,
+          has_prescription: updates.prescription !== undefined,
+          has_link: updates.consultation_link !== undefined,
+        },
+      }).catch((err) => console.warn('[Audit Log Warning]', err.message));
 
       // Check if we should trigger an email to patient
       let emailResult = null;

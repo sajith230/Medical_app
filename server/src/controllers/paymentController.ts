@@ -132,9 +132,11 @@ export async function processPayment(req: Request, res: Response): Promise<void>
 
       // Lock consultation record for update to prevent concurrent duplicate payments
       const consultRes = await client.query(
-        `SELECT c.id, c.status, c.patient_id, ct.price_cents, ct.display_name
+        `SELECT c.id, c.status, c.patient_id, ct.price_cents, ct.display_name,
+                p.full_name as patient_name, p.email as patient_email, p.user_id as patient_user_id
          FROM consultations c
          JOIN consultation_types ct ON ct.id = c.consultation_type_id
+         LEFT JOIN patients p ON p.id = c.patient_id
          WHERE c.id = $1 FOR UPDATE`,
         [cId]
       );
@@ -219,11 +221,19 @@ export async function processPayment(req: Request, res: Response): Promise<void>
         ).catch(() => {});
       }
 
-      // Create immutable audit log entry
+      // Create immutable audit log entry with patient actor info
+      const patientName = consult.patient_name || cardholder_name || 'Patient';
+      const patientEmail = consult.patient_email || '';
+      const patientUserId = consult.patient_user_id || null;
+
       await client.query(
-        `INSERT INTO audit_logs (action, table_name, record_id, details, ip_address)
-         VALUES ($1, $2, $3, $4, $5)`,
+        `INSERT INTO audit_logs (user_id, user_name, user_email, user_role, action, table_name, record_id, details, ip_address)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
         [
+          patientUserId,
+          patientName,
+          patientEmail,
+          'patient',
           'payment.processed',
           'payments',
           paymentRecord.id,
@@ -235,6 +245,9 @@ export async function processPayment(req: Request, res: Response): Promise<void>
             card_last4: cardLast4,
             payment_ref: paymentRef,
             cardholder_name: cardholder_name || 'Cardholder',
+            user_name: patientName,
+            user_email: patientEmail,
+            user_role: 'patient',
           }),
           ip,
         ]

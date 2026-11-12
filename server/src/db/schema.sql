@@ -202,6 +202,9 @@ FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 CREATE TABLE IF NOT EXISTS audit_logs (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+  user_name TEXT,
+  user_email TEXT,
+  user_role TEXT,
   action TEXT NOT NULL,
   table_name TEXT,
   record_id UUID,

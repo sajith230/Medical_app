@@ -730,6 +730,10 @@ export const api = {
       const sample: AuditLog[] = [
         {
           id: 'log-1',
+          user_id: '00000000-0000-0000-0000-000000000001',
+          user_name: 'System Administrator',
+          user_email: 'admin@medilanka.com',
+          user_role: 'admin',
           action: 'LOGIN_SUCCESS',
           table_name: 'users',
           record_id: 'admin-uuid',
@@ -738,6 +742,10 @@ export const api = {
         },
         {
           id: 'log-2',
+          user_id: null,
+          user_name: 'Savindi Panditha',
+          user_email: 'savindi.dasunika@gmail.com',
+          user_role: 'patient',
           action: 'CONSULTATION_CREATED',
           table_name: 'consultations',
           record_id: 'demo-c1',

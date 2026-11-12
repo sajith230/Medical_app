@@ -41,6 +41,9 @@ export async function testConnection(): Promise<boolean> {
       ALTER TABLE consultations ADD COLUMN IF NOT EXISTS booking_session_id TEXT;
       CREATE UNIQUE INDEX IF NOT EXISTS idx_consultations_booking_session
       ON consultations (booking_session_id);
+      ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS user_name TEXT;
+      ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS user_email TEXT;
+      ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS user_role TEXT;
     `).catch((err) => {
       console.warn('[PostgreSQL Migration Warning]', err.message);
     });
